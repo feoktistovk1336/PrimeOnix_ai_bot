@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, BufferedInputFile
+from aiogram.types import Message, BufferedInputFile, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -45,6 +45,17 @@ def _telegram_photo_input(image_url: str):
     return image_url
 
 
+
+
+def _clean_visible_text(text: str) -> str:
+    text = str(text or "")
+    text = text.replace("\\n", "\n").replace("\\t", " ")
+    text = text.replace("<b>", "").replace("</b>", "")
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
+    return text.strip()
+
+
 def _extract_quality_block(data_payload: dict) -> str:
     if not isinstance(data_payload, dict):
         return ""
@@ -52,11 +63,11 @@ def _extract_quality_block(data_payload: dict) -> str:
     comment = data_payload.get("quality_comment") or data_payload.get("self_check") or ""
     if not score and not comment:
         return ""
-    parts = ["🧠 <b>Проверка качества</b>"]
+    parts = ["🧠 Проверка качества"]
     if score:
-        parts.append(f"Оценка: <b>{score}/10</b>")
+        parts.append(f"Оценка: {score}/10")
     if comment:
-        parts.append(str(comment))
+        parts.append(_clean_visible_text(comment))
     return "\n".join(parts)
 
 
@@ -500,13 +511,16 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
     await state.clear()
     section_keyboard = _keyboard_by_key(task.get("keyboard", ""))
     if result.get("ok"):
-        answer = result.get("text") or result.get("raw") or "n8n принял задачу и вернул пустой ответ."
+        answer = _clean_visible_text(result.get("text") or result.get("raw") or "n8n принял задачу и вернул пустой ответ.")
         data_payload = result.get("data") if isinstance(result.get("data"), dict) else {}
         image_url = (
             data_payload.get("image_url")
             or data_payload.get("media_url")
             or data_payload.get("cover_url")
         )
+        image_urls = data_payload.get("image_urls") or []
+        if not image_urls and isinstance(data_payload.get("slides"), list):
+            image_urls = [s.get("image_url") or s.get("media_url") for s in data_payload.get("slides") if isinstance(s, dict) and (s.get("image_url") or s.get("media_url"))]
 
         # Сохраняем последний материал, чтобы после генерации работали кнопки:
         # улучшить, усилить хук, сохранить в очередь, подготовить к публикации.
@@ -522,6 +536,8 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
             "source": "n8n",
             "image_url": image_url,
             "media_url": image_url,
+            "image_urls": image_urls,
+            "slides": data_payload.get("slides") if isinstance(data_payload, dict) else None,
             "raw": data_payload,
         }
 
@@ -536,6 +552,20 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
                 )
             except Exception:
                 await message.answer(f"🖼 Картинка сгенерирована, но Telegram не смог загрузить её как фото:\n{image_url}")
+
+        # Для карусели отправляем изображения отдельным media group, если n8n их вернул.
+        if task.get("content_type") == "carousel" and image_urls:
+            try:
+                media = []
+                for idx, url in enumerate(image_urls[:8]):
+                    if not url:
+                        continue
+                    caption = "🎠 Картинки к карусели" if idx == 0 else None
+                    media.append(InputMediaPhoto(media=_telegram_photo_input(url), caption=caption))
+                if media:
+                    await message.bot.send_media_group(chat_id=message.chat.id, media=media)
+            except Exception as exc:
+                await message.answer(f"🎠 Карусель сгенерирована, но Telegram не смог загрузить картинки: {exc}")
 
         await message.answer(
             f"✅ {task.get('title', 'Задача')} готово.\n\n"
