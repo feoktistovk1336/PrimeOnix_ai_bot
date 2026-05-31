@@ -103,8 +103,7 @@ admin_menu = kb([
     ["🎯 Воронки IG→TG"],
     ["📬 Рассылки", "👥 Пользователи"],
     ["💎 Подписки и лимиты", "📈 Статистика"],
-    ["📦 Очередь", "🤖 AI Лаборатория"],
-    ["🧪 Проверки", "⚙️ Система"],
+    ["📦 Очередь", "🧪 Проверка системы"],
     ["🧭 Карта системы"],
     ["⬅️ Главное меню"],
 ])
@@ -164,7 +163,7 @@ prime_stats_menu = kb([
     ["⬅️ Назад в админку"],
 ])
 
-prime_checks_menu = kb([
+prime_system_check_menu = kb([
     ["🧪 Проверить n8n", "🧪 Проверить OpenRouter"],
     ["🧪 Проверить Telegram Bot", "🧪 Проверить IG Pipeline"],
     ["🧪 Проверить Image Generator", "🧪 Проверить Video Generator"],
@@ -172,13 +171,8 @@ prime_checks_menu = kb([
     ["⬅️ Назад в админку"],
 ])
 
-prime_system_hub_menu = kb([
-    ["🧪 Проверить n8n", "🧪 Проверить OpenRouter"],
-    ["🧪 Проверить Telegram Bot", "🧪 Проверить IG Pipeline"],
-    ["📲 Подключение Instagram"],
-    ["🔗 Webhooks n8n", "📜 Логи"],
-    ["⬅️ Назад в админку"],
-])
+prime_system_hub_menu = prime_system_check_menu
+prime_checks_menu = prime_system_check_menu
 
 prime_tool_menu = kb([
     ["⬅️ Назад в админку"],
@@ -198,7 +192,7 @@ prime_after_generation_menu = kb([
     ["🖼 Сгенерировать картинку", "🎬 Сгенерировать Reels"],
     ["📅 В очередь контента", "✏️ Редактировать"],
     ["🔁 Перегенерировать"],
-    ["⬅️ Назад в админку"],
+    ["⬅️ Назад в Контент Центр"],
 ])
 
 prime_queue_menu = kb([
