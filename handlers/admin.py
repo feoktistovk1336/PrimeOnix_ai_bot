@@ -63,8 +63,8 @@ ADMIN_MENU_BUTTONS = [
     "⬅️ Назад в админку",
 
     # PrimeOnix V2 unified admin buttons
-    "📣 Контент Центр", "📢 Telegram", "📲 Instagram", "🎯 Воронки IG→TG", "📬 Рассылки", "👥 Пользователи",
-    "💎 Подписки и лимиты", "📈 Статистика", "📦 Очередь", "🤖 AI Лаборатория", "🧪 Проверки", "⚙️ Система", "🧭 Карта системы",
+    "📣 Контент Центр", "🎯 Воронки IG→TG", "📬 Рассылки", "👥 Пользователи",
+    "💎 Подписки и лимиты", "📈 Статистика", "📦 Очередь", "🧪 Проверка системы", "🧭 Карта системы",
     "📢 Telegram пост", "🖼 TG пост + картинка", "📚 Серия постов", "🎁 Лид-магниты TG", "🚀 Прогрев TG", "🚀 Автопостинг TG", "📊 Статистика Telegram",
     "📷 Instagram пост", "🎠 Instagram карусель", "🎬 Instagram Reels", "📅 Контент-план", "🚀 Автопостинг IG", "📊 Статистика Instagram",
     "🎬 Reels → Telegram", "🎠 Карусель → Telegram", "📷 Пост → Telegram", "🎁 Лид-магнит → Telegram", "📨 DM Funnel", "🧭 Все funnel_id",
@@ -85,7 +85,7 @@ async def cancel_admin_state_if_button(message: Message, state: FSMContext):
     await state.clear()
 
     # PrimeOnix V2: если админ нажал кнопку меню во время ввода — переключаем раздел, а не отправляем текст как рассылку.
-    if message.text in {"📣 Контент Центр", "📢 Telegram", "📲 Instagram", "🎯 Воронки IG→TG", "📬 Рассылки", "👥 Пользователи", "💎 Подписки и лимиты", "📈 Статистика", "📦 Очередь", "🤖 AI Лаборатория", "🧪 Проверки", "⚙️ Система", "🧭 Карта системы"}:
+    if message.text in {"📣 Контент Центр", "🎯 Воронки IG→TG", "📬 Рассылки", "👥 Пользователи", "💎 Подписки и лимиты", "📈 Статистика", "📦 Очередь", "🧪 Проверка системы", "🧭 Карта системы"}:
         from handlers.admin_prime import HUBS
         text, keyboard = HUBS[message.text]
         await message.answer(text, reply_markup=keyboard, parse_mode="HTML")

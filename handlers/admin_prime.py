@@ -14,6 +14,7 @@ from keyboards import (
     prime_instagram_hub_menu,
     prime_agents_hub_menu,
     prime_system_hub_menu,
+    prime_system_check_menu,
     prime_telegram_hub_menu,
     prime_broadcast_menu,
     prime_users_menu,
@@ -78,6 +79,8 @@ from handlers.prime_viral import LAST_PRIME_RESULT
 class AdminPrimeN8NState(StatesGroup):
     waiting_task_prompt = State()
     waiting_edit_prompt = State()
+    waiting_find_user = State()
+    waiting_user_history = State()
 
 
 
@@ -155,25 +158,15 @@ HUBS = {
         "Публикации, отложка, ошибки, готовые материалы и повтор публикаций.",
         prime_publish_hub_menu,
     ),
-    "🤖 AI Лаборатория": (
-        "🤖 <b>AI Лаборатория</b>\n\n"
-        "Viral Reels, карусели, хуки, лид-магниты и тест промптов.",
-        prime_agents_hub_menu,
-    ),
-    "📈 Статистика": (
+        "📈 Статистика": (
         "📈 <b>Статистика</b>\n\n"
         "Это отдельный раздел с метриками. Выбери, какую статистику посмотреть 👇",
         prime_stats_menu,
     ),
-    "🧪 Проверки": (
-        "🧪 <b>Проверки</b>\n\n"
-        "Это отдельный раздел диагностики связей. Нажимаешь кнопку — проверяем конкретную интеграцию 👇",
-        prime_checks_menu,
-    ),
-    "⚙️ Система": (
-        "⚙️ <b>Система</b>\n\n"
-        "Технические настройки: webhooks, API, логи, интеграции и backup.",
-        prime_system_hub_menu,
+    "🧪 Проверка системы": (
+        "🧪 <b>Проверка системы</b>\n\n"
+        "Единый раздел диагностики: n8n, OpenRouter, Telegram Bot, IG Pipeline, генерация картинок, видео, webhooks и логи. Нажимаешь кнопку — проверяем конкретную интеграцию 👇",
+        prime_system_check_menu,
     ),
 }
 
@@ -260,8 +253,8 @@ N8N_ADMIN_TASKS = {
 
 def _keyboard_by_key(key: str):
     return {
-        "telegram": prime_telegram_hub_menu,
-        "instagram": prime_instagram_hub_menu,
+        "telegram": prime_content_hub_menu,
+        "instagram": prime_content_hub_menu,
         "funnel": prime_funnel_hub_menu,
         "content": prime_content_hub_menu,
     }.get(key, prime_panel_menu)
@@ -325,6 +318,59 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
         return
 
     await state.clear()
+
+    # Реальные админские данные без заглушек.
+    if message.text == "👥 Список пользователей":
+        import aiosqlite
+        from database.db import DB_PATH
+        async with aiosqlite.connect(DB_PATH) as db:
+            cur = await db.execute("SELECT user_id, username, first_name, plan, pro_until, created_at FROM users ORDER BY created_at DESC LIMIT 20")
+            rows = await cur.fetchall()
+        if not rows:
+            await message.answer("👥 Пользователей пока нет в базе.", reply_markup=prime_users_menu)
+            return
+        lines = ["👥 <b>Последние пользователи</b>\n"]
+        for uid, username, first_name, plan, pro_until, created_at in rows:
+            name = (first_name or username or "без имени")
+            uname = f"@{username}" if username else "—"
+            lines.append(f"• <code>{uid}</code> — {name} / {uname} / {plan or 'free'}")
+        await message.answer("\n".join(lines), reply_markup=prime_users_menu, parse_mode="HTML")
+        return
+
+    if message.text == "🔎 Найти пользователя":
+        await state.set_state(AdminPrimeN8NState.waiting_find_user)
+        await message.answer("🔎 Отправь user_id или username пользователя.", reply_markup=prime_users_menu)
+        return
+
+    if message.text == "📜 История пользователя":
+        await state.set_state(AdminPrimeN8NState.waiting_user_history)
+        await message.answer("📜 Отправь user_id пользователя для истории.", reply_markup=prime_users_menu)
+        return
+
+    if message.text in {"➕ Выдать бонусы", "🔄 Сбросить лимиты", "⛔ Заблокировать", "🚫 Забрать PRO"}:
+        await message.answer(f"{message.text}\n\nОтправь user_id пользователя. После следующего шага подключим запись в БД/лимиты. Меню остаётся в разделе пользователей.", reply_markup=prime_users_menu)
+        return
+
+    if message.text in {"👥 Статистика пользователей", "⚡ Статистика генераций", "💎 Статистика подписок", "📈 Статистика лимитов", "🎯 Статистика воронок", "📲 Статистика Instagram", "📢 Статистика Telegram", "🚨 Ошибки n8n"}:
+        import aiosqlite
+        from database.db import DB_PATH, get_stats
+        stats = await get_stats()
+        if message.text == "👥 Статистика пользователей":
+            async with aiosqlite.connect(DB_PATH) as db:
+                cur = await db.execute("SELECT plan, COUNT(*) FROM users GROUP BY plan")
+                plans = await cur.fetchall()
+            plan_text = "\n".join([f"• {p or 'free'}: {c}" for p, c in plans]) or "нет данных"
+            await message.answer(f"👥 <b>Статистика пользователей</b>\n\nВсего: {stats['total_users']}\nPRO: {stats['total_pro']}\n\nПо тарифам:\n{plan_text}", reply_markup=prime_stats_menu, parse_mode="HTML")
+            return
+        if message.text == "⚡ Статистика генераций":
+            async with aiosqlite.connect(DB_PATH) as db:
+                cur = await db.execute("SELECT feature, COUNT(*) FROM usage GROUP BY feature ORDER BY COUNT(*) DESC LIMIT 20")
+                rows = await cur.fetchall()
+            usage = "\n".join([f"• {f}: {c}" for f, c in rows]) or "пока нет данных"
+            await message.answer(f"⚡ <b>Статистика генераций</b>\n\nВсего: {stats['total_generations']}\n\n{usage}", reply_markup=prime_stats_menu, parse_mode="HTML")
+            return
+        await message.answer(f"{message.text}\n\nПока доступна базовая сводка:\n👥 Пользователей: {stats['total_users']}\n💎 PRO: {stats['total_pro']}\n⚡ Генераций: {stats['total_generations']}\n\nДетальную метрику подключим через n8n/БД после стабилизации контента.", reply_markup=prime_stats_menu)
+        return
 
     if message.text in N8N_ADMIN_TASKS:
         task = N8N_ADMIN_TASKS[message.text]
@@ -425,7 +471,7 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
     if message.text in {"👥 Статистика пользователей", "⚡ Статистика генераций", "💎 Статистика подписок", "📈 Статистика лимитов", "🎯 Статистика воронок", "📲 Статистика Instagram", "📢 Статистика Telegram", "🚨 Ошибки n8n"}:
         section_keyboard = prime_stats_menu
     elif message.text in {"🧪 Проверить n8n", "🧪 Проверить OpenRouter", "🧪 Проверить Telegram Bot", "🧪 Проверить IG Pipeline", "🧪 Проверить Image Generator", "🧪 Проверить Video Generator", "🔗 Webhooks n8n", "📜 Логи"}:
-        section_keyboard = prime_checks_menu
+        section_keyboard = prime_system_check_menu
     elif message.text in {"🕒 Запланированные", "📜 История рассылок"}:
         section_keyboard = prime_broadcast_menu
     elif "Telegram" in text_info or "TG" in text_info:
@@ -473,6 +519,11 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
     if text in HUBS:
         await state.clear()
         hub_text, hub_keyboard = HUBS[text]
+        await message.answer(hub_text, reply_markup=hub_keyboard, parse_mode="HTML")
+        return
+    if text in {"⬅️ Назад в Контент Центр"}:
+        await state.clear()
+        hub_text, hub_keyboard = HUBS["📣 Контент Центр"]
         await message.answer(hub_text, reply_markup=hub_keyboard, parse_mode="HTML")
         return
     if text in {"⬅️ Назад в админку", "⬅️ Назад в PRIME PANEL", "❌ Отмена"}:
@@ -587,6 +638,54 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
             reply_markup=section_keyboard,
         )
 
+
+
+@router.message(AdminPrimeN8NState.waiting_find_user)
+async def admin_find_user_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    q = (message.text or '').strip().lstrip('@')
+    import aiosqlite
+    from database.db import DB_PATH
+    async with aiosqlite.connect(DB_PATH) as db:
+        if q.isdigit():
+            cur = await db.execute("SELECT user_id, username, first_name, plan, pro_until, created_at FROM users WHERE user_id=?", (int(q),))
+        else:
+            cur = await db.execute("SELECT user_id, username, first_name, plan, pro_until, created_at FROM users WHERE lower(username)=lower(?)", (q,))
+        row = await cur.fetchone()
+    await state.clear()
+    if not row:
+        await message.answer("🔎 Пользователь не найден.", reply_markup=prime_users_menu)
+        return
+    uid, username, first_name, plan, pro_until, created_at = row
+    await message.answer(
+        f"🔎 <b>Пользователь найден</b>\n\nID: <code>{uid}</code>\nUsername: @{username or '—'}\nИмя: {first_name or '—'}\nТариф: {plan or 'free'}\nPRO до: {pro_until or '—'}\nСоздан: {created_at or '—'}",
+        reply_markup=prime_users_menu,
+        parse_mode="HTML",
+    )
+
+@router.message(AdminPrimeN8NState.waiting_user_history)
+async def admin_user_history_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    q = (message.text or '').strip()
+    if not q.isdigit():
+        await message.answer("Отправь числовой user_id.", reply_markup=prime_users_menu)
+        return
+    uid = int(q)
+    import aiosqlite
+    from database.db import DB_PATH
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT feature, created_at FROM usage WHERE user_id=? ORDER BY created_at DESC LIMIT 20", (uid,))
+        rows = await cur.fetchall()
+    await state.clear()
+    if not rows:
+        await message.answer(f"📜 История пользователя <code>{uid}</code> пустая.", reply_markup=prime_users_menu, parse_mode="HTML")
+        return
+    lines = [f"📜 <b>История пользователя</b> <code>{uid}</code>\n"]
+    for feature, created_at in rows:
+        lines.append(f"• {created_at}: {feature}")
+    await message.answer("\n".join(lines), reply_markup=prime_users_menu, parse_mode="HTML")
 
 # =========================
 # AFTER GENERATION ACTIONS — publish/transform/queue/edit/regenerate
@@ -869,6 +968,15 @@ async def regenerate_last_material(message: Message, state: FSMContext):
     else:
         await message.answer(f"❌ Не получилось перегенерировать: {result.get('error')}", reply_markup=prime_after_generation_menu)
 
+
+
+@router.message(F.text == "⬅️ Назад в Контент Центр")
+async def back_to_content_center_from_prime(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    await state.clear()
+    text, keyboard = HUBS["📣 Контент Центр"]
+    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
 
 @router.message(F.text == "⬅️ Назад в админку")
 async def back_to_admin_from_prime(message: Message, state: FSMContext):
