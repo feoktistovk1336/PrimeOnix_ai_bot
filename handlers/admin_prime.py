@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import Message, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -26,6 +26,39 @@ from keyboards import (
 
 
 router = Router()
+
+
+def _telegram_photo_input(image_url: str):
+    """Accepts normal URL or data:image/...;base64,... returned by OpenRouter image models."""
+    if not image_url:
+        return None
+    image_url = str(image_url).strip()
+    if image_url.startswith("data:image/") and ";base64," in image_url:
+        import base64, re
+        header, b64 = image_url.split(",", 1)
+        ext = "jpg"
+        m = re.search(r"data:image/([^;]+);base64", header)
+        if m:
+            ext = "jpg" if m.group(1).lower() == "jpeg" else m.group(1).lower()
+        data = base64.b64decode(b64)
+        return BufferedInputFile(data, filename=f"primeonix_image.{ext}")
+    return image_url
+
+
+def _extract_quality_block(data_payload: dict) -> str:
+    if not isinstance(data_payload, dict):
+        return ""
+    score = data_payload.get("quality_score")
+    comment = data_payload.get("quality_comment") or data_payload.get("self_check") or ""
+    if not score and not comment:
+        return ""
+    parts = ["🧠 <b>Проверка качества</b>"]
+    if score:
+        parts.append(f"Оценка: <b>{score}/10</b>")
+    if comment:
+        parts.append(str(comment))
+    return "\n".join(parts)
+
 
 # Shared last generated material storage used by PRIME action buttons (improve/save/prepare).
 from handlers.prime_viral import LAST_PRIME_RESULT
@@ -498,7 +531,7 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
             try:
                 await message.bot.send_photo(
                     chat_id=message.chat.id,
-                    photo=image_url,
+                    photo=_telegram_photo_input(image_url),
                     caption="🖼 Картинка к Telegram-посту",
                 )
             except Exception:
@@ -506,10 +539,12 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
 
         await message.answer(
             f"✅ {task.get('title', 'Задача')} готово.\n\n"
-            f"HTTP status: {result.get('status')}\n\n"
             f"{answer}",
             reply_markup=prime_after_generation_menu,
         )
+        quality_block = _extract_quality_block(data_payload)
+        if quality_block:
+            await message.answer(quality_block, reply_markup=prime_after_generation_menu)
         await message.answer(
             "Что делаем дальше? 👇",
             reply_markup=prime_after_generation_menu,
@@ -567,7 +602,7 @@ async def publish_last_to_telegram_channel(message: Message, state: FSMContext):
         if image_url:
             await message.bot.send_photo(
                 chat_id=settings.CHANNEL_ID,
-                photo=image_url,
+                photo=_telegram_photo_input(image_url),
                 caption=_short_caption(content),
             )
             if len(content) > 1024:
@@ -647,7 +682,7 @@ async def generate_image_for_last(message: Message, state: FSMContext):
         if image_url:
             LAST_PRIME_RESULT[message.from_user.id].update({"image_url": image_url, "media_url": image_url, "content": text})
             try:
-                await message.bot.send_photo(message.chat.id, image_url, caption="🖼 Картинка готова")
+                await message.bot.send_photo(message.chat.id, _telegram_photo_input(image_url), caption="🖼 Картинка готова")
             except Exception:
                 await message.answer(f"🖼 Картинка готова, но Telegram не загрузил фото:\n{image_url}")
         await message.answer(f"✅ Картинка добавлена к материалу.\n\n{text}", reply_markup=prime_after_generation_menu)

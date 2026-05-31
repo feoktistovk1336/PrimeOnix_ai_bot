@@ -5,7 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 from handlers.admin import is_admin
 from handlers.prime_viral import LAST_PRIME_RESULT
-from keyboards import prime_panel_menu, prime_autopost_menu, dm_funnel_topic_menu, publish_prepare_menu
+from keyboards import prime_panel_menu, prime_autopost_menu, dm_funnel_topic_menu, publish_prepare_menu, prime_publish_hub_menu, prime_checks_menu
 from services.ai import ask_ai
 from services.sender import send_long
 from services.content_queue import (
@@ -555,7 +555,7 @@ async def schedule_queue_item_by_command(message: Message):
         f"ID: {item_id}\n"
         f"Время: {updated.get('scheduled_at') if updated else dt.strftime('%Y-%m-%d %H:%M')}\n"
         f"Тема: {item.get('topic', 'Без темы')}",
-        reply_markup=prime_autopost_menu,
+        reply_markup=prime_publish_hub_menu,
     )
 
 
@@ -567,7 +567,7 @@ async def publication_queue(message: Message):
 
     items = list_prime_content(message.from_user.id, limit=15)
     if not items:
-        await message.answer("📌 Очередь публикаций пока пустая.", reply_markup=prime_autopost_menu)
+        await message.answer("📌 Очередь публикаций пока пустая.", reply_markup=prime_publish_hub_menu)
         return
 
     lines = ["📌 <b>Очередь публикаций</b>\n"]
@@ -585,7 +585,7 @@ async def publication_queue(message: Message):
             f"Тема: {topic}\n"
         )
     lines.append("Команды:\n<code>запланировать 3 завтра 18:00</code>\n<code>готово 3</code>\n<code>удалить 3</code>")
-    await message.answer("\n".join(lines), reply_markup=prime_autopost_menu, parse_mode="HTML")
+    await message.answer("\n".join(lines), reply_markup=prime_publish_hub_menu, parse_mode="HTML")
 
 
 async def _send_last_to_n8n_publish(message: Message, action: str, platform: str, human_title: str):
