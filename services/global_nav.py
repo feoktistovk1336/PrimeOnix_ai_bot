@@ -106,6 +106,38 @@ class GlobalNavigationMiddleware(BaseMiddleware):
             await message.answer("Главное меню 👇", reply_markup=home_menu(uid))
             return True
 
+        if text == "🧠 Обучить стилю":
+            from handlers.content import ContentState
+            await state.set_state(ContentState.waiting_style_sample)
+            await message.answer(
+                "🧠 Обучение стилю\n\n"
+                "Отправь 1–10 примеров постов, которые нравятся. Можно текстом, ссылками или пересланными постами.\n\n"
+                "Я сохраню стиль накопительно: новые примеры добавляются к старым, профиль становится точнее.",
+                reply_markup=style_menu,
+            )
+            return True
+
+        if text == "✍️ Опиши стиль":
+            from handlers.content import ContentState, style_description_prompt
+            await state.set_state(ContentState.waiting_style_description)
+            await message.answer(style_description_prompt(), reply_markup=style_menu)
+            return True
+
+        if text == "🎭 Мой стиль":
+            from database.db import get_user_style
+            style = await get_user_style(message.from_user.id)
+            await message.answer(
+                ("🎭 Твой сохранённый стиль:\n\n" + style[:2500]) if style else "🎭 Стиль пока не обучен. Нажми «🧠 Обучить стилю» и отправь примеры.",
+                reply_markup=style_menu,
+            )
+            return True
+
+        if text in {"♻️ Сбросить стиль", "❌ Сбросить стиль"}:
+            from database.db import reset_user_style
+            await reset_user_style(message.from_user.id)
+            await message.answer("✅ Стиль сброшен. Можно обучить заново.", reply_markup=style_menu)
+            return True
+
         if text in {"🚀 Создать", "🚀 Создать контент", "📦 Создать", "⬅️ Назад в создание"}:
             await message.answer("🚀 <b>Создать контент</b>\n\nВыбери формат:", reply_markup=create_menu, parse_mode="HTML")
             return True
@@ -127,8 +159,8 @@ class GlobalNavigationMiddleware(BaseMiddleware):
             await message.answer(ai_profile_text(), reply_markup=profile_menu)
             return True
 
-        if text == "🎭 Стиль":
-            await message.answer("🎭 Стиль автора\n\nВыбери действие:", reply_markup=style_menu)
+        if text in {"🎭 Стиль", "🎭 Стиль текста"}:
+            await message.answer("🎭 Стиль автора\n\nВыбери действие:\n\n✍️ Опиши стиль — вручную задать тон.\n🧠 Обучить стилю — прислать примеры постов.\n🎭 Мой стиль — посмотреть, что сохранено.", reply_markup=style_menu)
             return True
 
         if text == "👑 Админ" or text == "⬅️ Назад в админку":
