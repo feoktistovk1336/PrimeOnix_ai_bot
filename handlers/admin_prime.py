@@ -52,6 +52,23 @@ def _clean_visible_text(text: str) -> str:
     text = str(text or "")
     text = text.replace("\\n", "\n").replace("\\t", " ")
     text = text.replace("<b>", "").replace("</b>", "")
+    forbidden_lines = [
+        "что делаем дальше",
+        "проверка качества",
+        "оценка:",
+        "caption:",
+    ]
+    cleaned = []
+    skip_quality_tail = False
+    for line in text.splitlines():
+        low = line.strip().lower()
+        if any(x in low for x in forbidden_lines):
+            skip_quality_tail = "проверка качества" in low or "оценка:" in low
+            continue
+        if skip_quality_tail and (low.startswith("качествен") or low.startswith("материал") or low.startswith("пост")):
+            continue
+        cleaned.append(line)
+    text = "\n".join(cleaned)
     while "\n\n\n" in text:
         text = text.replace("\n\n\n", "\n\n")
     return text.strip()
@@ -428,8 +445,24 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
         await message.answer("📜 Отправь user_id пользователя для истории.", reply_markup=prime_users_menu)
         return
 
-    if message.text in {"➕ Выдать бонусы", "🔄 Сбросить лимиты", "⛔ Заблокировать", "🚫 Забрать PRO"}:
-        await message.answer(f"{message.text}\n\nОтправь user_id пользователя. После следующего шага подключим запись в БД/лимиты. Меню остаётся в разделе пользователей.", reply_markup=prime_users_menu)
+    if message.text == "➕ Выдать бонусы":
+        await state.set_state(AdminPrimeN8NState.waiting_bonus_user)
+        await message.answer("➕ Отправь user_id и количество бонусов.\n\nПример: 916037494 10", reply_markup=prime_users_menu)
+        return
+
+    if message.text == "🔄 Сбросить лимиты":
+        await state.set_state(AdminPrimeN8NState.waiting_reset_limits_user)
+        await message.answer("🔄 Отправь user_id пользователя для сброса лимитов.", reply_markup=prime_users_menu)
+        return
+
+    if message.text == "⛔ Заблокировать":
+        await state.set_state(AdminPrimeN8NState.waiting_block_user)
+        await message.answer("⛔ Отправь user_id пользователя для блокировки.", reply_markup=prime_users_menu)
+        return
+
+    if message.text == "🚫 Забрать PRO":
+        await state.set_state(AdminPrimeN8NState.waiting_remove_pro_user)
+        await message.answer("🚫 Отправь user_id пользователя, у которого нужно забрать PRO.", reply_markup=prime_users_menu)
         return
 
     if message.text in {"👥 Статистика пользователей", "⚡ Статистика генераций", "💎 Статистика подписок", "📈 Статистика лимитов", "🎯 Статистика воронок", "📲 Статистика Instagram", "📢 Статистика Telegram", "🚨 Ошибки n8n"}:
@@ -450,7 +483,27 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
             usage = "\n".join([f"• {f}: {c}" for f, c in rows]) or "пока нет данных"
             await message.answer(f"⚡ <b>Статистика генераций</b>\n\nВсего: {stats['total_generations']}\n\n{usage}", reply_markup=prime_stats_menu, parse_mode="HTML")
             return
-        await message.answer(f"{message.text}\n\nПока доступна базовая сводка:\n👥 Пользователей: {stats['total_users']}\n💎 PRO: {stats['total_pro']}\n⚡ Генераций: {stats['total_generations']}\n\nДетальную метрику подключим через n8n/БД после стабилизации контента.", reply_markup=prime_stats_menu)
+        titles = {
+            "💎 Статистика подписок": "💎 <b>Статистика подписок</b>",
+            "📈 Статистика лимитов": "📈 <b>Статистика лимитов</b>",
+            "🎯 Статистика воронок": "🎯 <b>Статистика воронок</b>",
+            "📲 Статистика Instagram": "📲 <b>Статистика Instagram</b>",
+            "📢 Статистика Telegram": "📢 <b>Статистика Telegram</b>",
+            "🚨 Ошибки n8n": "🚨 <b>Ошибки n8n</b>",
+        }
+        extra = ""
+        if message.text == "🚨 Ошибки n8n":
+            async with aiosqlite.connect(DB_PATH) as db:
+                cur = await db.execute("SELECT event, details, created_at FROM admin_logs ORDER BY id DESC LIMIT 10")
+                rows = await cur.fetchall()
+            extra = "\n".join([f"• {created_at}: {event} — {details[:120]}" for event, details, created_at in rows]) or "Ошибок пока нет."
+        else:
+            extra = (
+                f"👥 Пользователей: {stats['total_users']}\n"
+                f"💎 PRO: {stats['total_pro']}\n"
+                f"⚡ Генераций: {stats['total_generations']}"
+            )
+        await message.answer(f"{titles.get(message.text, message.text)}\n\n{extra}", reply_markup=prime_stats_menu, parse_mode="HTML")
         return
 
     if message.text in N8N_ADMIN_TASKS:
@@ -687,13 +740,15 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
 
         # Для обычного поста отправляем только текст.
         # Для TG пост + картинка дополнительно отправляем изображение из n8n.
+        preview_sent_with_media = False
         if task.get("content_type") == "post_image" and image_url:
             try:
                 await message.bot.send_photo(
                     chat_id=message.chat.id,
                     photo=_telegram_photo_input(image_url),
-                    caption="🖼 Картинка к Telegram-посту",
+                    caption=_short_caption(answer, 900),
                 )
+                preview_sent_with_media = True
             except Exception:
                 await message.answer(f"🖼 Картинка сгенерирована, но Telegram не смог загрузить её как фото:\n{image_url}")
 
@@ -711,18 +766,17 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
             except Exception as exc:
                 await message.answer(f"🎠 Карусель сгенерирована, но Telegram не смог загрузить картинки: {exc}")
 
-        await message.answer(
-            f"✅ {task.get('title', 'Задача')} готово.\n\n"
-            f"{answer}",
-            reply_markup=prime_after_generation_menu,
-        )
-        quality_block = _extract_quality_block(data_payload)
-        if quality_block:
-            await message.answer(quality_block, reply_markup=prime_after_generation_menu)
-        await message.answer(
-            "Что делаем дальше? 👇",
-            reply_markup=prime_after_generation_menu,
-        )
+        if preview_sent_with_media:
+            await message.answer(
+                f"✅ {task.get('title', 'Задача')} готово.",
+                reply_markup=prime_after_generation_menu,
+            )
+        else:
+            await message.answer(
+                f"✅ {task.get('title', 'Задача')} готово.\n\n"
+                f"{answer}",
+                reply_markup=prime_after_generation_menu,
+            )
     else:
         await message.answer(
             f"❌ n8n не обработал: {task.get('title', 'задача')}\n\n"
@@ -788,9 +842,15 @@ def _last_material(user_id: int):
     return LAST_PRIME_RESULT.get(user_id)
 
 
-def _short_caption(text: str, limit: int = 1024) -> str:
-    text = (text or "").strip()
-    return text if len(text) <= limit else text[: limit - 1] + "…"
+def _short_caption(text: str, limit: int = 900) -> str:
+    text = _clean_visible_text(text or "").strip()
+    # Telegram caption limit is 1024. For image posts we keep one clean compact caption, not a split post.
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit("\n", 1)[0].strip()
+    if len(cut) < 250:
+        cut = text[:limit].rsplit(" ", 1)[0].strip()
+    return cut + "…"
 
 
 async def _require_last_material(message: Message):
@@ -825,10 +885,8 @@ async def publish_last_to_telegram_channel(message: Message, state: FSMContext):
             await message.bot.send_photo(
                 chat_id=settings.CHANNEL_ID,
                 photo=_telegram_photo_input(image_url),
-                caption=_short_caption(content),
+                caption=_short_caption(content, 900),
             )
-            if len(content) > 1024:
-                await message.bot.send_message(chat_id=settings.CHANNEL_ID, text=content)
         else:
             await message.bot.send_message(chat_id=settings.CHANNEL_ID, text=content)
         await message.answer("✅ Опубликовано в Telegram-канал.", reply_markup=prime_after_generation_menu)
@@ -886,10 +944,10 @@ async def generate_image_for_last(message: Message, state: FSMContext):
     from services.n8n_client import call_n8n
     await message.answer("🖼 Генерирую картинку по смыслу последнего материала...")
     result = await call_n8n({
-        "action": "telegram_post_image",
+        "action": "image_from_existing_content",
         "workflow": "telegram",
         "platform": "telegram",
-        "content_type": "post_image",
+        "content_type": "image_only",
         "source": "telegram_bot_admin",
         "user_id": message.from_user.id,
         "topic": last.get("topic"),
@@ -900,14 +958,15 @@ async def generate_image_for_last(message: Message, state: FSMContext):
     if result.get("ok"):
         data = result.get("data") if isinstance(result.get("data"), dict) else {}
         image_url = data.get("image_url") or data.get("media_url") or data.get("cover_url")
-        text = result.get("text") or result.get("raw") or last.get("content") or ""
         if image_url:
-            LAST_PRIME_RESULT[message.from_user.id].update({"image_url": image_url, "media_url": image_url, "content": text})
+            LAST_PRIME_RESULT[message.from_user.id].update({"image_url": image_url, "media_url": image_url})
             try:
                 await message.bot.send_photo(message.chat.id, _telegram_photo_input(image_url), caption="🖼 Картинка готова")
             except Exception:
                 await message.answer(f"🖼 Картинка готова, но Telegram не загрузил фото:\n{image_url}")
-        await message.answer(f"✅ Картинка добавлена к материалу.\n\n{text}", reply_markup=prime_after_generation_menu)
+            await message.answer("✅ Картинка добавлена к последнему материалу.", reply_markup=prime_after_generation_menu)
+        else:
+            await message.answer("⚠️ n8n ответил без image_url. Проверь image-узел OpenRouter.", reply_markup=prime_after_generation_menu)
     else:
         await message.answer(f"❌ Картинка не сгенерировалась: {result.get('error')}", reply_markup=prime_after_generation_menu)
 
@@ -935,7 +994,7 @@ async def generate_reels_from_last(message: Message, state: FSMContext):
         "expected_response": {"text": "Reels script based on existing content"},
     }, timeout=120)
     if result.get("ok"):
-        answer = result.get("text") or result.get("raw") or "Reels готов."
+        answer = _clean_visible_text(result.get("text") or result.get("raw") or "Reels готов.")
         data = result.get("data") if isinstance(result.get("data"), dict) else {}
         LAST_PRIME_RESULT[message.from_user.id] = {
             "tool": "🎬 Reels из материала",
@@ -1039,7 +1098,7 @@ async def regenerate_last_material(message: Message, state: FSMContext):
     if not last:
         return
     from services.n8n_client import call_n8n
-    await message.answer("🔁 Перегенерирую заново с проверкой качества...")
+    await message.answer("🔁 Перегенерирую материал заново...")
     result = await call_n8n({
         "action": last.get("action") or "regenerate_content",
         "workflow": last.get("workflow") or "telegram",

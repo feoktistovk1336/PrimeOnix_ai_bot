@@ -251,7 +251,7 @@ async def cancel_user_state_if_button(message: Message, state: FSMContext):
         return True
 
     if message.text in ["♻️ Сбросить стиль", "❌ Сбросить стиль"]:
-        await reset_user_style, save_style_sample, get_style_samples(message.from_user.id)
+        await reset_user_style(message.from_user.id)
         await message.answer(
             "✅ Стиль сброшен.\n\n"
             "Теперь AI снова будет писать в стандартном стиле.",
@@ -649,12 +649,20 @@ async def save_style_sample_handler(message: Message, state: FSMContext):
         return
 
     user_id = message.from_user.id
-    sample = (message.text or "").strip()
+    sample = (message.text or message.caption or "").strip()
 
-    if len(sample) < 120:
+    if not sample and getattr(message, 'photo', None):
+        await message.answer(
+            "📸 Скрин получил, но для обучения стилю мне нужен текст поста или ссылка.\n\n"
+            "Пришли текстом пример поста, который нравится, или ссылку/пересланный пост с подписью.",
+            reply_markup=style_menu,
+        )
+        return
+
+    if len(sample) < 40:
         await message.answer(
             "❌ Слишком мало текста.\n\n"
-            "Отправь хотя бы один нормальный пост или несколько абзацев. Лучше — 3–10 постов одним сообщением.",
+            "Отправь хотя бы один пост, ссылку с пояснением или несколько абзацев. Лучше — 3–10 постов одним сообщением.",
             reply_markup=style_menu,
         )
         return
@@ -747,7 +755,7 @@ async def my_style(message: Message):
 async def reset_style(message: Message, state: FSMContext):
     await state.clear()
 
-    await reset_user_style, save_style_sample, get_style_samples(message.from_user.id)
+    await reset_user_style(message.from_user.id)
 
     await message.answer(
         "✅ Стиль сброшен.\n\n"
@@ -828,7 +836,7 @@ async def choose_content_type(message: Message, state: FSMContext):
         return True
 
     if message.text in ["♻️ Сбросить стиль", "❌ Сбросить стиль"]:
-        await reset_user_style, save_style_sample, get_style_samples(message.from_user.id)
+        await reset_user_style(message.from_user.id)
         await message.answer(
             "✅ Стиль сброшен.\n\n"
             "Теперь AI снова будет писать в стандартном стиле.",
