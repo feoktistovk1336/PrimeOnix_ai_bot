@@ -10,7 +10,7 @@ from database.db import (
     get_user_plan,
     save_user_style,
     get_user_style,
-    reset_user_style,
+    reset_user_style, save_style_sample, get_style_samples,
     save_user_profile_field,
     get_user_profile,
     reset_user_profile
@@ -251,7 +251,7 @@ async def cancel_user_state_if_button(message: Message, state: FSMContext):
         return True
 
     if message.text in ["♻️ Сбросить стиль", "❌ Сбросить стиль"]:
-        await reset_user_style(message.from_user.id)
+        await reset_user_style, save_style_sample, get_style_samples(message.from_user.id)
         await message.answer(
             "✅ Стиль сброшен.\n\n"
             "Теперь AI снова будет писать в стандартном стиле.",
@@ -644,41 +644,85 @@ async def learn_style_start(message: Message, state: FSMContext):
 
 
 @router.message(ContentState.waiting_style_sample)
-async def save_style_sample(message: Message, state: FSMContext):
-
+async def save_style_sample_handler(message: Message, state: FSMContext):
     if await cancel_user_state_if_button(message, state):
         return
 
     user_id = message.from_user.id
-    sample = message.text.strip()
+    sample = (message.text or "").strip()
 
-    if len(sample) < 500:
+    if len(sample) < 120:
         await message.answer(
             "❌ Слишком мало текста.\n\n"
-            "Отправь 3–10 своих постов одним сообщением."
+            "Отправь хотя бы один нормальный пост или несколько абзацев. Лучше — 3–10 постов одним сообщением.",
+            reply_markup=style_menu,
         )
         return
 
-    await message.answer(
-        "🧠 Анализирую Brand Voice...\n\n"
-        "Это займёт до 30 секунд."
-    )
+    await message.answer("🧠 Анализирую стиль и добавляю в AI-профиль...")
 
-    brand_brain = await build_brand_brain(sample)
+    previous = await get_style_samples(user_id, limit=5)
+    previous_block = "\n\n".join([row[1] or row[0][:800] for row in previous]) if previous else ""
 
-    await save_user_style(user_id, brand_brain)
+    prompt = f"""
+Ты анализатор Brand Voice для PrimeOnix AI.
+Нужно извлечь стиль автора из примеров и сделать практичный профиль для будущей генерации постов, каруселей и Reels.
 
+Прошлые выводы по стилю, если есть:
+{previous_block or 'нет'}
+
+Новые примеры пользователя:
+{sample}
+
+Верни структурированный анализ на русском:
+1. Тон и настроение
+2. Длина и ритм фраз
+3. Структура постов
+4. Эмодзи и визуальные маркеры
+5. Что обязательно повторять
+6. Что запрещено
+7. Формула поста автора
+8. Формула карусели автора
+9. Формула Reels автора
+
+Не копируй тексты дословно. Это профиль стиля, а не новый пост.
+"""
+    try:
+        brand_brain = await ask_ai(prompt)
+    except Exception:
+        brand_brain = (
+            "Профиль стиля обновлён вручную по присланным примерам.\n"
+            "Пиши структурно, живо, с короткими абзацами, сильными заголовками, без воды.\n\n"
+            f"Примеры пользователя:\n{sample[:2500]}"
+        )
+
+    combined_style = f"""
+Накопительный Brand Voice пользователя PrimeOnix.
+
+Последний анализ:
+{brand_brain}
+
+Свежие примеры, на которых обучались:
+{sample[:3000]}
+
+Правила использования:
+- используй стиль как ориентир, не копируй дословно;
+- обычные посты/карусели/Reels делай без лид-магнитного CTA;
+- CTA используй только если пользователь явно выбрал воронку/лид-магнит;
+- сохраняй структуру, темп, подачу и визуальную манеру.
+""".strip()
+
+    await save_user_style(user_id, combined_style)
+    await save_style_sample(user_id, sample, brand_brain)
     await state.clear()
 
     await message.answer(
-        "✅ Brand Brain сохранён\n\n"
-        "Теперь контент будет генерироваться ближе к твоему стилю."
+        "✅ Стиль обновлён и сохранён\n\n"
+        "Можно обучать ещё: снова нажми «🧠 Обучить стилю» и отправь новые посты. "
+        "Профиль будет уточняться.",
+        reply_markup=style_menu,
     )
-
-    await message.answer(
-        f"🧠 Краткий анализ:\n\n"
-        f"{brand_brain[:3000]}"
-    )
+    await message.answer(f"🧠 Краткий анализ:\n\n{brand_brain[:3000]}", reply_markup=style_menu)
 
 
 @router.message(F.text == "🎭 Мой стиль")
@@ -703,7 +747,7 @@ async def my_style(message: Message):
 async def reset_style(message: Message, state: FSMContext):
     await state.clear()
 
-    await reset_user_style(message.from_user.id)
+    await reset_user_style, save_style_sample, get_style_samples(message.from_user.id)
 
     await message.answer(
         "✅ Стиль сброшен.\n\n"
@@ -784,7 +828,7 @@ async def choose_content_type(message: Message, state: FSMContext):
         return True
 
     if message.text in ["♻️ Сбросить стиль", "❌ Сбросить стиль"]:
-        await reset_user_style(message.from_user.id)
+        await reset_user_style, save_style_sample, get_style_samples(message.from_user.id)
         await message.answer(
             "✅ Стиль сброшен.\n\n"
             "Теперь AI снова будет писать в стандартном стиле.",

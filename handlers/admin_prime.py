@@ -81,6 +81,13 @@ class AdminPrimeN8NState(StatesGroup):
     waiting_edit_prompt = State()
     waiting_find_user = State()
     waiting_user_history = State()
+    waiting_block_user = State()
+    waiting_bonus_user = State()
+    waiting_reset_limits_user = State()
+    waiting_remove_pro_user = State()
+    waiting_broadcast_text = State()
+    waiting_delete_queue_id = State()
+    waiting_schedule_queue = State()
 
 
 
@@ -261,6 +268,14 @@ def _keyboard_by_key(key: str):
 
 
 ADMIN_ACTION_TEXTS = {
+    "❌ Отмена рассылки": "Рассылка: отмена режима.",
+    "✅ Отметить готово": "Очередь: отметить материал готовым.",
+    "📤 Подготовить к публикации": "Очередь: подготовить материал к публикации.",
+    "📅 Публикация позже": "Очередь: запланировать материал.",
+    "🗑 Удалить из очереди": "Очередь: удалить материал по ID.",
+    "🕒 Посмотреть очередь": "Очередь: посмотреть материалы.",
+    "📌 Очередь публикаций": "Очередь: список сохранённых материалов.",
+    "🚫 Заблокировать": "Админ: заблокировать пользователя по user_id.",
     "📢 Telegram пост": "WF Telegram Post: текст для Telegram.",
     "🖼 TG пост + картинка": "WF Telegram Post + Image: текст + картинка для Telegram.",
     "📚 Серия постов": "WF Telegram Series: серия постов для канала.",
@@ -318,6 +333,72 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
         return
 
     await state.clear()
+
+    # ===== Реальные разделы очереди, рассылок, пользователей и диагностики без вылета в главное меню =====
+    if message.text in {"📌 Очередь публикаций", "🕒 Посмотреть очередь"}:
+        from services.content_queue import list_prime_content, queue_stats
+        items = list_prime_content(user_id=None, limit=10)
+        stats = queue_stats()
+        if not items:
+            await message.answer(
+                "📌 <b>Контент-очередь пуста</b>\n\n"
+                "Сгенерируй материал и нажми «📅 В очередь контента».\n\n"
+                "Статусы: " + (", ".join([f"{k}: {v}" for k, v in stats.items()]) or "нет"),
+                reply_markup=prime_publish_hub_menu,
+                parse_mode="HTML",
+            )
+            return
+        lines = ["📌 <b>Контент-очередь</b>\n"]
+        for it in items:
+            lines.append(
+                f"ID: <code>{it.get('id')}</code> | {it.get('status')} | {it.get('platform')} | {it.get('content_type')}\n"
+                f"Тема: {it.get('topic')}\n"
+            )
+        lines.append("Команды: удалить ID / готово ID / запланировать ID завтра 18:00")
+        await message.answer("\n".join(lines), reply_markup=prime_publish_hub_menu, parse_mode="HTML")
+        return
+
+    if message.text == "🗑 Удалить из очереди":
+        await state.set_state(AdminPrimeN8NState.waiting_delete_queue_id)
+        await message.answer("🗑 Отправь ID материала из очереди для удаления.", reply_markup=prime_publish_hub_menu)
+        return
+
+    if message.text == "📅 Публикация позже":
+        await state.set_state(AdminPrimeN8NState.waiting_schedule_queue)
+        await message.answer("📅 Отправь: ID и время.\n\nПример: 3 завтра 18:00", reply_markup=prime_publish_hub_menu)
+        return
+
+    if message.text == "📤 Подготовить к публикации":
+        await message.answer("📤 Выбери материал в очереди или сначала сгенерируй контент. После генерации нажми «📤 Опубликовать в Telegram» или «📲 Опубликовать в Instagram».", reply_markup=prime_publish_hub_menu)
+        return
+
+    if message.text == "✅ Отметить готово":
+        await message.answer("✅ Чтобы отметить материал готовым, отправь команду: готово ID\nНапример: готово 3", reply_markup=prime_publish_hub_menu)
+        return
+
+    if message.text in {"📣 Рассылка всем", "💎 Рассылка PRO", "🆓 Рассылка FREE", "🎯 Рассылка по сегменту"}:
+        segment = {"📣 Рассылка всем":"all", "💎 Рассылка PRO":"pro", "🆓 Рассылка FREE":"free", "🎯 Рассылка по сегменту":"segment"}[message.text]
+        await state.update_data(broadcast_segment=segment)
+        await state.set_state(AdminPrimeN8NState.waiting_broadcast_text)
+        await message.answer(
+            f"📬 Рассылка: {message.text}\n\n"
+            "Напиши текст рассылки.\n\n"
+            "После текста я покажу предпросмотр и оставлю тебя в разделе рассылок.",
+            reply_markup=prime_broadcast_menu,
+        )
+        return
+
+    if message.text == "❌ Отмена рассылки":
+        await message.answer("❌ Рассылка отменена.", reply_markup=prime_broadcast_menu)
+        return
+
+    if message.text == "🕒 Запланированные":
+        await message.answer("🕒 Запланированные рассылки пока пустые. Когда добавим расписание — здесь будет список будущих отправок.", reply_markup=prime_broadcast_menu)
+        return
+
+    if message.text == "📜 История рассылок":
+        await message.answer("📜 История рассылок пока пустая. После первой рассылки здесь появятся дата, сегмент, текст и статус.", reply_markup=prime_broadcast_menu)
+        return
 
     # Реальные админские данные без заглушек.
     if message.text == "👥 Список пользователей":
@@ -455,6 +536,18 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
                 f"Детали: {result.get('message') or result.get('raw') or result.get('data')}",
                 reply_markup=prime_checks_menu,
             )
+        return
+
+    if message.text == "📜 Логи":
+        from database.db import get_admin_logs
+        rows = await get_admin_logs(10)
+        if not rows:
+            await message.answer("📜 Логи пока пустые. Ошибки и важные админ-действия будут появляться здесь.", reply_markup=prime_system_check_menu)
+            return
+        lines = ["📜 <b>Последние логи</b>\n"]
+        for level, event, details, created_at in rows:
+            lines.append(f"• {created_at} | {level} | {event}\n{details or ''}")
+        await message.answer("\n".join(lines), reply_markup=prime_system_check_menu, parse_mode="HTML")
         return
 
     if message.text == "🔗 Webhooks n8n":
@@ -969,6 +1062,104 @@ async def regenerate_last_material(message: Message, state: FSMContext):
         await message.answer(f"❌ Не получилось перегенерировать: {result.get('error')}", reply_markup=prime_after_generation_menu)
 
 
+
+
+
+@router.message(AdminPrimeN8NState.waiting_block_user)
+async def admin_block_user_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    q=(message.text or '').strip()
+    if not q.isdigit():
+        await message.answer("Отправь числовой user_id.", reply_markup=prime_users_menu); return
+    from database.db import set_user_blocked, log_admin_event
+    await set_user_blocked(int(q), 1)
+    await log_admin_event('admin', 'block_user', f'blocked user_id={q}')
+    await state.clear()
+    await message.answer(f"⛔ Пользователь <code>{q}</code> заблокирован.", reply_markup=prime_users_menu, parse_mode='HTML')
+
+@router.message(AdminPrimeN8NState.waiting_bonus_user)
+async def admin_bonus_user_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    parts=(message.text or '').strip().split()
+    if not parts or not parts[0].isdigit():
+        await message.answer("Отправь: user_id количество.\nПример: 916037494 10", reply_markup=prime_users_menu); return
+    uid=int(parts[0]); amount=int(parts[1]) if len(parts)>1 and parts[1].isdigit() else 10
+    from database.db import add_user_bonus, log_admin_event
+    await add_user_bonus(uid, amount)
+    await log_admin_event('admin', 'add_bonus', f'user_id={uid}, amount={amount}')
+    await state.clear()
+    await message.answer(f"➕ Пользователю <code>{uid}</code> выдано бонусов: {amount}.", reply_markup=prime_users_menu, parse_mode='HTML')
+
+@router.message(AdminPrimeN8NState.waiting_reset_limits_user)
+async def admin_reset_limits_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    q=(message.text or '').strip()
+    if not q.isdigit():
+        await message.answer("Отправь числовой user_id.", reply_markup=prime_users_menu); return
+    from database.db import reset_user_limits, log_admin_event
+    await reset_user_limits(int(q))
+    await log_admin_event('admin', 'reset_limits', f'user_id={q}')
+    await state.clear()
+    await message.answer(f"🔄 Дневные лимиты пользователя <code>{q}</code> сброшены.", reply_markup=prime_users_menu, parse_mode='HTML')
+
+@router.message(AdminPrimeN8NState.waiting_remove_pro_user)
+async def admin_remove_pro_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    q=(message.text or '').strip()
+    if not q.isdigit():
+        await message.answer("Отправь числовой user_id.", reply_markup=prime_users_menu); return
+    from database.db import deactivate_pro, log_admin_event
+    await deactivate_pro(int(q))
+    await log_admin_event('admin', 'remove_pro', f'user_id={q}')
+    await state.clear()
+    await message.answer(f"🚫 PRO у пользователя <code>{q}</code> отключён.", reply_markup=prime_users_menu, parse_mode='HTML')
+
+@router.message(AdminPrimeN8NState.waiting_broadcast_text)
+async def admin_broadcast_text_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    text=(message.text or '').strip()
+    if text in {'⬅️ Назад в админку','❌ Отмена рассылки'}:
+        await state.clear(); await message.answer('📬 Рассылка отменена.', reply_markup=prime_broadcast_menu); return
+    data=await state.get_data(); segment=data.get('broadcast_segment','all')
+    await state.clear()
+    # Безопасный режим: пока делаем предпросмотр, массовую отправку включим отдельным подтверждением.
+    from database.db import log_admin_event
+    await log_admin_event('admin', 'broadcast_preview', f'segment={segment}, text={text[:300]}')
+    await message.answer(
+        f"📬 <b>Рассылка подготовлена</b>\n\nСегмент: <code>{segment}</code>\n\nТекст:\n{text}\n\nСледующий шаг: добавим кнопку подтверждения отправки, чтобы случайно не разослать черновик.",
+        reply_markup=prime_broadcast_menu,
+        parse_mode='HTML',
+    )
+
+@router.message(AdminPrimeN8NState.waiting_delete_queue_id)
+async def admin_delete_queue_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    q=(message.text or '').strip()
+    if not q.isdigit():
+        await message.answer('Отправь числовой ID материала.', reply_markup=prime_publish_hub_menu); return
+    from services.content_queue import delete_prime_content
+    ok=delete_prime_content(int(q))
+    await state.clear()
+    await message.answer(('🗑 Материал удалён.' if ok else '⚠️ Материал с таким ID не найден.'), reply_markup=prime_publish_hub_menu)
+
+@router.message(AdminPrimeN8NState.waiting_schedule_queue)
+async def admin_schedule_queue_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    text=(message.text or '').strip()
+    parts=text.split(maxsplit=1)
+    if not parts or not parts[0].isdigit():
+        await message.answer('Отправь: ID и время. Пример: 3 завтра 18:00', reply_markup=prime_publish_hub_menu); return
+    from services.content_queue import schedule_prime_content
+    item=schedule_prime_content(int(parts[0]), parts[1] if len(parts)>1 else 'время не указано')
+    await state.clear()
+    await message.answer(('📅 Материал запланирован.' if item else '⚠️ Материал с таким ID не найден.'), reply_markup=prime_publish_hub_menu)
 
 @router.message(F.text == "⬅️ Назад в Контент Центр")
 async def back_to_content_center_from_prime(message: Message, state: FSMContext):

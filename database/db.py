@@ -25,6 +25,36 @@ async def init_db():
         except Exception:
             pass
 
+        for column_def in [
+            "blocked INTEGER DEFAULT 0",
+            "bonus_generations INTEGER DEFAULT 0",
+            "last_active_at TEXT"
+        ]:
+            try:
+                await db.execute(f"ALTER TABLE users ADD COLUMN {column_def}")
+            except Exception:
+                pass
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS admin_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            level TEXT,
+            event TEXT,
+            details TEXT,
+            created_at TEXT
+        )
+        """)
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS style_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            sample_text TEXT,
+            analysis TEXT,
+            created_at TEXT
+        )
+        """)
+
         await db.execute("""
         CREATE TABLE IF NOT EXISTS usage (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1065,3 +1095,99 @@ async def get_referral_stats(user_id: int):
         "total_referrals": total,
         "premium_days": total * 3
     }
+
+# ===== PRIME admin helpers =====
+async def log_admin_event(level: str, event: str, details: str = ""):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS admin_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            level TEXT,
+            event TEXT,
+            details TEXT,
+            created_at TEXT
+        )
+        """)
+        await db.execute("INSERT INTO admin_logs (level,event,details,created_at) VALUES (?,?,?,?)",
+                         (level, event, details, datetime.utcnow().isoformat()))
+        await db.commit()
+
+async def get_admin_logs(limit: int = 10):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS admin_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            level TEXT,
+            event TEXT,
+            details TEXT,
+            created_at TEXT
+        )
+        """)
+        cur = await db.execute("SELECT level,event,details,created_at FROM admin_logs ORDER BY id DESC LIMIT ?", (limit,))
+        return await cur.fetchall()
+
+async def set_user_blocked(user_id: int, blocked: int = 1):
+    await register_user(user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN blocked INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        await db.execute("UPDATE users SET blocked=? WHERE user_id=?", (int(blocked), int(user_id)))
+        await db.commit()
+
+async def add_user_bonus(user_id: int, amount: int = 10):
+    await register_user(user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN bonus_generations INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        await db.execute("UPDATE users SET bonus_generations=COALESCE(bonus_generations,0)+? WHERE user_id=?", (int(amount), int(user_id)))
+        await db.commit()
+
+async def reset_user_limits(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM usage WHERE user_id=? AND DATE(created_at)=DATE('now')", (int(user_id),))
+        await db.commit()
+
+async def deactivate_pro(user_id: int):
+    await register_user(user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET plan='free', pro_until=NULL WHERE user_id=?", (int(user_id),))
+        await db.commit()
+
+async def get_user_history(user_id: int, limit: int = 20):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT feature, created_at FROM usage WHERE user_id=? ORDER BY id DESC LIMIT ?", (int(user_id), int(limit)))
+        return await cur.fetchall()
+
+async def save_style_sample(user_id: int, sample_text: str, analysis: str):
+    await register_user(user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS style_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            sample_text TEXT,
+            analysis TEXT,
+            created_at TEXT
+        )
+        """)
+        await db.execute("INSERT INTO style_samples (user_id,sample_text,analysis,created_at) VALUES (?,?,?,?)",
+                         (int(user_id), sample_text, analysis, datetime.utcnow().isoformat()))
+        await db.commit()
+
+async def get_style_samples(user_id: int, limit: int = 10):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS style_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            sample_text TEXT,
+            analysis TEXT,
+            created_at TEXT
+        )
+        """)
+        cur = await db.execute("SELECT sample_text, analysis, created_at FROM style_samples WHERE user_id=? ORDER BY id DESC LIMIT ?", (int(user_id), int(limit)))
+        return await cur.fetchall()
