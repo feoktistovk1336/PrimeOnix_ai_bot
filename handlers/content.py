@@ -125,6 +125,7 @@ USER_MENU_BUTTONS = [
 
     "🎭 Стиль",
     "🎭 Стиль текста",
+    "🧠 Обучить стилю",
     "🎨 Стиль визуала",
     "🎯 Цель контента",
     "✍️ Опиши стиль",
@@ -438,7 +439,7 @@ async def content_menu_handler(message: Message, state: FSMContext):
     )
 
 
-@router.message(F.text == "🎭 Стиль")
+@router.message(F.text.in_({"🎭 Стиль", "🎭 Стиль текста"}))
 async def style_menu_handler(message: Message, state: FSMContext):
     await state.clear()
 

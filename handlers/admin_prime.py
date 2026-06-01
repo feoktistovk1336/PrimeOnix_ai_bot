@@ -746,7 +746,7 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
                 await message.bot.send_photo(
                     chat_id=message.chat.id,
                     photo=_telegram_photo_input(image_url),
-                    caption=_short_caption(answer, 900),
+                    caption=_short_caption(answer, 700),
                 )
                 preview_sent_with_media = True
             except Exception:
@@ -885,7 +885,7 @@ async def publish_last_to_telegram_channel(message: Message, state: FSMContext):
             await message.bot.send_photo(
                 chat_id=settings.CHANNEL_ID,
                 photo=_telegram_photo_input(image_url),
-                caption=_short_caption(content, 900),
+                caption=_short_caption(content, 700),
             )
         else:
             await message.bot.send_message(chat_id=settings.CHANNEL_ID, text=content)

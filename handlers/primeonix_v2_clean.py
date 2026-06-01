@@ -324,8 +324,8 @@ async def v2_generate_content(message: Message, state: FSMContext):
                 BufferedInputFile(image_bytes.getvalue(), filename="ready_post.jpg"),
                 caption=post_text[:1024],
             )
-            if len(post_text) > 1024:
-                await send_long(message, post_text)
+            # Для поста с картинкой не дублируем полный текст вторым сообщением.
+            # Если текст длиннее лимита подписи, он остается доступен в режиме редактирования/перегенерации.
             await track_usage(user_id, "post_image")
         except Exception as exc:
             await message.answer(f"❌ Ошибка генерации поста с картинкой: {exc}")
@@ -441,4 +441,4 @@ async def v2_generate_content(message: Message, state: FSMContext):
         await send_long(message, result)
         await track_usage(user_id, "content_factory")
 
-    await message.answer("✅ Готово. Что делаем дальше?", reply_markup=after_generation_menu)
+    await message.answer("✅ Материал готов.", reply_markup=after_generation_menu)

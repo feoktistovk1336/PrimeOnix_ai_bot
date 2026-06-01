@@ -412,7 +412,7 @@ async def prime_improve_generated(message: Message):
         "content": full_result,
     }
     await send_long(message, full_result)
-    await message.answer("✅ Готово. Что делаем дальше?", reply_markup=prime_after_generation_menu)
+    await message.answer("✅ Материал готов.", reply_markup=prime_after_generation_menu)
 
 
 @router.message(F.text == "📌 Сохранить в очередь")

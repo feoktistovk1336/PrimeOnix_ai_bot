@@ -168,7 +168,7 @@ async def send_last_prime_to_n8n(message: Message):
 
     if result.get("ok") and result.get("text"):
         await send_long(message, "✅ n8n обработал материал:\n\n" + result["text"])
-        await message.answer("Что делаем дальше?", reply_markup=prime_autopost_menu)
+        await message.answer("✅ Материал готов.", reply_markup=prime_autopost_menu)
         return
 
     if result.get("ok"):
@@ -635,7 +635,7 @@ async def _send_last_to_n8n_publish(message: Message, action: str, platform: str
         text = result.get("text") or "n8n принял задачу и подготовил пакет. Проверь Executions/очередь."
         title = human_title.replace("публикация", "пакет").replace("Публикация", "пакет")
         await send_long(message, f"✅ {title} готов\n\nID в очереди: {item['id']}\nСтатус: {status}\n\n{text}", parse_mode="HTML")
-        await message.answer("Что делаем дальше?", reply_markup=prime_autopost_menu)
+        await message.answer("✅ Материал готов.", reply_markup=prime_autopost_menu)
         return
 
     update_prime_content(item["id"], status="failed", meta={**item.get("meta", {}), "n8n_error": result})
