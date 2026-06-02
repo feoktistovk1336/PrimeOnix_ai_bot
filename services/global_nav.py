@@ -24,6 +24,10 @@ from keyboards import (
     image_style_menu,
     carousel_style_menu,
     goal_menu,
+    prime_broadcast_menu,
+    prime_users_menu,
+    prime_limits_menu,
+    prime_publish_hub_menu,
 )
 
 
@@ -67,9 +71,9 @@ PRIME_BUTTONS = {
     "📨 DM Funnel", "📅 Публикация позже", "📌 Очередь публикаций", "📌 Контент-очередь", "📌 Сохранить как готово к IG",
     "📤 Опубликовать Reels по URL", "📲 Instagram пакет", "📣 Telegram пакет", "📤 AutoPost Center", "⬅️ AutoPost Center",
     "📣 Контент Центр", "📢 Telegram", "🎯 Воронки IG→TG", "📬 Рассылки", "👥 Пользователи", "💎 Подписки и лимиты",
-    "📈 Статистика", "📦 Очередь", "🤖 AI Лаборатория", "🧪 Проверки", "🧭 Карта системы",
+    "📈 Статистика", "📦 Очередь", "🤖 AI Лаборатория", "🧪 Проверки", "🧪 Проверка системы", "🧭 Карта системы",
     "📬 Новая рассылка", "📣 Рассылка всем", "💎 Рассылка PRO", "🆓 Рассылка FREE", "🎯 Рассылка по сегменту",
-    "➕ Выдать бонусы", "🚫 Забрать PRO", "🔄 Сбросить лимиты", "📊 Проверить подписку",
+    "➕ Выдать бонусы", "🚫 Забрать PRO", "🔄 Сбросить лимиты", "📊 Проверить подписку", "⛔ Заблокировать", "📜 История пользователя", "🔎 Найти пользователя", "👥 Список пользователей", "⚙️ Лимиты FREE", "⚙️ Лимиты PRO", "🕒 Запланированные", "📜 История рассылок", "🗑 Удалить из очереди", "✅ Отметить готово", "✏️ Редактировать материал", "🔄 Обновить очередь",
 }
 
 ALL_NAV_BUTTONS = MAIN_BUTTONS | CREATE_BUTTONS | CONTENT_BUTTONS | PROFILE_BUTTONS | ADMIN_BUTTONS | PRIME_BUTTONS
@@ -163,6 +167,67 @@ class GlobalNavigationMiddleware(BaseMiddleware):
             await message.answer("🎭 Стиль автора\n\nВыбери действие:\n\n✍️ Опиши стиль — вручную задать тон.\n🧠 Обучить стилю — прислать примеры постов.\n🎭 Мой стиль — посмотреть, что сохранено.", reply_markup=style_menu)
             return True
 
+
+        # Админские подменю: при активном FSM не выбрасываем в главное меню, а переключаемся внутри текущего блока.
+        if text in {"📣 Рассылка всем", "💎 Рассылка PRO", "🆓 Рассылка FREE", "🎯 Рассылка по сегменту", "📬 Новая рассылка"}:
+            if not owner:
+                await message.answer("❌ Нет доступа")
+                return True
+            from handlers.admin_prime import AdminPrimeN8NState
+            segment = {"📣 Рассылка всем":"all", "💎 Рассылка PRO":"pro", "🆓 Рассылка FREE":"free", "🎯 Рассылка по сегменту":"segment", "📬 Новая рассылка":"all"}[text]
+            await state.update_data(broadcast_segment=segment)
+            await state.set_state(AdminPrimeN8NState.waiting_broadcast_text)
+            await message.answer(f"📬 Рассылка: {text}\n\nНапиши текст рассылки. Я покажу предпросмотр и оставлю тебя в разделе рассылок.", reply_markup=prime_broadcast_menu)
+            return True
+
+        if text in {"🕒 Запланированные", "📜 История рассылок", "❌ Отмена рассылки"}:
+            if not owner:
+                await message.answer("❌ Нет доступа")
+                return True
+            if text == "🕒 Запланированные":
+                await message.answer("🕒 Запланированные рассылки пока пустые. Здесь будут будущие рассылки и расписание.", reply_markup=prime_broadcast_menu)
+            elif text == "📜 История рассылок":
+                await message.answer("📜 История рассылок пока пустая. После первой рассылки здесь появится дата, сегмент, текст и статус.", reply_markup=prime_broadcast_menu)
+            else:
+                await message.answer("❌ Рассылка отменена.", reply_markup=prime_broadcast_menu)
+            return True
+
+        if text in {"👥 Список пользователей", "🔎 Найти пользователя", "📜 История пользователя", "➕ Выдать бонусы", "🔄 Сбросить лимиты", "⛔ Заблокировать", "🚫 Забрать PRO", "💎 Выдать PRO"}:
+            if not owner:
+                await message.answer("❌ Нет доступа")
+                return True
+            from handlers.admin_prime import AdminPrimeN8NState
+            if text == "🔎 Найти пользователя":
+                await state.set_state(AdminPrimeN8NState.waiting_find_user); await message.answer("🔎 Отправь user_id или username пользователя.", reply_markup=prime_users_menu); return True
+            if text == "📜 История пользователя":
+                await state.set_state(AdminPrimeN8NState.waiting_user_history); await message.answer("📜 Отправь user_id пользователя для истории.", reply_markup=prime_users_menu); return True
+            if text == "➕ Выдать бонусы":
+                await state.set_state(AdminPrimeN8NState.waiting_bonus_user); await message.answer("➕ Отправь user_id и количество бонусов.\n\nПример: 916037494 10", reply_markup=prime_users_menu); return True
+            if text == "🔄 Сбросить лимиты":
+                await state.set_state(AdminPrimeN8NState.waiting_reset_limits_user); await message.answer("🔄 Отправь user_id пользователя для сброса лимитов.", reply_markup=prime_users_menu); return True
+            if text == "⛔ Заблокировать":
+                await state.set_state(AdminPrimeN8NState.waiting_block_user); await message.answer("⛔ Отправь user_id пользователя для блокировки.", reply_markup=prime_users_menu); return True
+            if text == "🚫 Забрать PRO":
+                await state.set_state(AdminPrimeN8NState.waiting_remove_pro_user); await message.answer("🚫 Отправь user_id пользователя, у которого нужно забрать PRO.", reply_markup=prime_users_menu); return True
+            if text == "💎 Выдать PRO":
+                from handlers.admin import AdminState
+                await state.set_state(AdminState.waiting_pro_user_id); await message.answer("💎 Выдать PRO\n\nОтправь user_id пользователя.", reply_markup=prime_users_menu); return True
+            # список пользователей передаём обычному обработчику, чтобы он прочитал БД
+            await message.answer("👥 Открой раздел пользователей и нажми кнопку ещё раз — список будет показан из базы.", reply_markup=prime_users_menu)
+            return True
+
+        if text in {"🕒 Посмотреть очередь", "📌 Очередь публикаций", "📤 Подготовить к публикации", "📅 Публикация позже", "✅ Отметить готово", "🗑 Удалить из очереди", "✏️ Редактировать материал", "🔄 Обновить очередь"}:
+            if not owner:
+                await message.answer("❌ Нет доступа")
+                return True
+            from handlers.admin_prime import AdminPrimeN8NState
+            if text == "🗑 Удалить из очереди":
+                await state.set_state(AdminPrimeN8NState.waiting_delete_queue_id); await message.answer("🗑 Отправь ID материала из очереди для удаления.", reply_markup=prime_publish_hub_menu); return True
+            if text == "📅 Публикация позже":
+                await state.set_state(AdminPrimeN8NState.waiting_schedule_queue); await message.answer("📅 Отправь: ID и время.\n\nПример: 3 завтра 18:00", reply_markup=prime_publish_hub_menu); return True
+            await message.answer("📦 Раздел очереди. Выбери действие внутри очереди — создание контента здесь не запускается.", reply_markup=prime_publish_hub_menu)
+            return True
+
         if text == "👑 Админ" or text == "⬅️ Назад в админку":
             if not owner:
                 await message.answer("❌ Нет доступа")
@@ -178,12 +243,12 @@ class GlobalNavigationMiddleware(BaseMiddleware):
             await message.answer(PRIME_PANEL_TEXT, reply_markup=prime_panel_menu, parse_mode="HTML")
             return True
 
-        if text in {"🧭 Карта системы", "🎯 Воронки IG→TG", "🔗 Воронки IG→TG", "📣 Контент Центр", "📢 Telegram", "📲 Instagram", "📬 Рассылки", "👥 Пользователи", "💎 Подписки и лимиты", "📈 Статистика", "📦 Очередь", "🤖 AI Лаборатория", "🧪 Проверки", "⚙️ Система"}:
+        if text in {"🧭 Карта системы", "🎯 Воронки IG→TG", "🔗 Воронки IG→TG", "📣 Контент Центр", "📢 Telegram", "📲 Instagram", "📬 Рассылки", "👥 Пользователи", "💎 Подписки и лимиты", "📈 Статистика", "📦 Очередь", "🤖 AI Лаборатория", "🧪 Проверки", "🧪 Проверка системы", "⚙️ Система"}:
             if not owner:
                 await message.answer("❌ Нет доступа")
                 return True
             from handlers.admin_prime import HUBS
-            hub_key = "🎯 Воронки IG→TG" if text == "🔗 Воронки IG→TG" else text
+            hub_key = "🎯 Воронки IG→TG" if text == "🔗 Воронки IG→TG" else ("🧪 Проверка системы" if text in {"🧪 Проверки", "⚙️ Система"} else text)
             hub_text, hub_keyboard = HUBS[hub_key]
             if text in {"🎯 Воронки IG→TG", "🔗 Воронки IG→TG"}:
                 from handlers.ig_tg_funnel import IgTgFunnelState

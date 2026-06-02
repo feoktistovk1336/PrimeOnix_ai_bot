@@ -178,8 +178,8 @@ HUBS = {
         prime_limits_menu,
     ),
     "📦 Очередь": (
-        "📦 <b>Очередь</b>\n\n"
-        "Публикации, отложка, ошибки, готовые материалы и повтор публикаций.",
+        "📦 <b>Очередь публикаций</b>\n\n"
+        "Здесь только управление очередью: просмотр, подготовка, отложка, редактирование, удаление и повторы. Создание контента вынесено в «📣 Контент Центр».",
         prime_publish_hub_menu,
     ),
         "📈 Статистика": (
@@ -217,6 +217,8 @@ async def open_prime_panel(message: Message, state: FSMContext):
         await message.answer("❌ Нет доступа")
         return
 
+    from database.db import register_user
+    await register_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     await state.clear()
     await message.answer(PRIME_PANEL_TEXT, reply_markup=prime_panel_menu, parse_mode="HTML")
 
@@ -393,6 +395,17 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
         await message.answer("✅ Чтобы отметить материал готовым, отправь команду: готово ID\nНапример: готово 3", reply_markup=prime_publish_hub_menu)
         return
 
+    if message.text == "✏️ Редактировать материал":
+        await message.answer("✏️ Чтобы отредактировать материал в очереди, отправь: редактировать ID новый текст.\nНапример: редактировать 3 Сделай текст короче и сильнее.", reply_markup=prime_publish_hub_menu)
+        return
+
+    if message.text == "🔄 Обновить очередь":
+        from services.content_queue import list_prime_content, queue_stats
+        items = list_prime_content(user_id=None, limit=10)
+        stats = queue_stats()
+        await message.answer("🔄 Очередь обновлена. Нажми «🕒 Посмотреть очередь» для просмотра.\n\nСтатусы: " + (", ".join([f"{k}: {v}" for k, v in stats.items()]) or "нет"), reply_markup=prime_publish_hub_menu)
+        return
+
     if message.text in {"📣 Рассылка всем", "💎 Рассылка PRO", "🆓 Рассылка FREE", "🎯 Рассылка по сегменту"}:
         segment = {"📣 Рассылка всем":"all", "💎 Рассылка PRO":"pro", "🆓 Рассылка FREE":"free", "🎯 Рассылка по сегменту":"segment"}[message.text]
         await state.update_data(broadcast_segment=segment)
@@ -425,7 +438,12 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
             cur = await db.execute("SELECT user_id, username, first_name, plan, pro_until, created_at FROM users ORDER BY created_at DESC LIMIT 20")
             rows = await cur.fetchall()
         if not rows:
-            await message.answer("👥 Пользователей пока нет в базе.", reply_markup=prime_users_menu)
+            from database.db import register_user
+            await register_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+            cur = await db.execute("SELECT user_id, username, first_name, plan, pro_until, created_at FROM users ORDER BY created_at DESC LIMIT 20")
+            rows = await cur.fetchall()
+        if not rows:
+            await message.answer("👥 Пользователей пока нет в базе. Но админ будет добавлен в базу после следующего /start или входа в админку.", reply_markup=prime_users_menu)
             return
         lines = ["👥 <b>Последние пользователи</b>\n"]
         for uid, username, first_name, plan, pro_until, created_at in rows:
@@ -1194,6 +1212,12 @@ async def admin_broadcast_text_apply(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await state.clear(); return
     text=(message.text or '').strip()
+    if text in {"📣 Рассылка всем", "💎 Рассылка PRO", "🆓 Рассылка FREE", "🎯 Рассылка по сегменту", "📬 Новая рассылка"}:
+        segment = {"📣 Рассылка всем":"all", "💎 Рассылка PRO":"pro", "🆓 Рассылка FREE":"free", "🎯 Рассылка по сегменту":"segment", "📬 Новая рассылка":"all"}[text]
+        await state.update_data(broadcast_segment=segment)
+        await state.set_state(AdminPrimeN8NState.waiting_broadcast_text)
+        await message.answer(f"📬 Рассылка: {text}\n\nНапиши текст рассылки. Можно переключаться между сегментами — я оставлю тебя в разделе рассылок.", reply_markup=prime_broadcast_menu)
+        return
     if text in {'⬅️ Назад в админку','❌ Отмена рассылки'}:
         await state.clear(); await message.answer('📬 Рассылка отменена.', reply_markup=prime_broadcast_menu); return
     data=await state.get_data(); segment=data.get('broadcast_segment','all')
