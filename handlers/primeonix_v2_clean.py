@@ -148,7 +148,10 @@ async def v2_cabinet(message: Message, state: FSMContext):
 
     features = [
         ("content_factory", "✍️ Посты"),
-        ("post_image", "🖼 Картинки"),
+        ("post_image", "🖼 Пост+картинка"),
+        ("carousel", "🎠 Карусели"),
+        ("reels", "🎬 Reels"),
+        ("ai_chat", "🤖 AI Чат"),
         ("content_pack", "🚀 Контент-пак"),
         ("rewrite", "✍️ Rewrite"),
         ("brand_rewrite", "🎭 Brand Voice"),
@@ -156,11 +159,8 @@ async def v2_cabinet(message: Message, state: FSMContext):
     limits = []
     for feature, title in features:
         used = await get_daily_usage(user_id, feature)
-        if tariff.get("unlimited"):
-            limits.append(f"{title}: {used}/∞")
-        else:
-            limit = await get_feature_limit(user_id, feature)
-            limits.append(f"{title}: {used}/{limit}")
+        limit = await get_feature_limit(user_id, feature)
+        limits.append(f"{title}: {used}/{limit}")
 
     await message.answer(
         "📊 <b>Личный кабинет</b>\n\n"
@@ -332,6 +332,9 @@ async def v2_generate_content(message: Message, state: FSMContext):
             return
 
     elif action == "carousel":
+        if not await can_use_feature(user_id, "carousel"):
+            await message.answer("❌ Лимит на карусели на сегодня закончился. Оформи тариф выше.")
+            return
         await message.answer("🎠 Создаю карусель...")
         carousel_text = await generate_ready_carousel(prompt, style_block, profile_block, memory_block, content_goal)
         try:
@@ -344,13 +347,16 @@ async def v2_generate_content(message: Message, state: FSMContext):
         except Exception:
             pass
         await send_long(message, "📝 Текст карусели:\n\n" + carousel_text)
-        await track_usage(user_id, "content_factory")
+        await track_usage(user_id, "carousel")
 
     elif action == "reels":
-        await message.answer("🎬 Создаю Reels-сценарий...")
+        if not await can_use_feature(user_id, "reels"):
+            await message.answer("❌ Лимит Reels на сегодня закончился. Оформи тариф выше.")
+            return
+        await message.answer("🎬 Создаю Reels-пакет...")
         result = await ask_ai(build_reels_prompt(prompt, style_block, profile_block, memory_block, content_goal))
         await send_long(message, result)
-        await track_usage(user_id, "content_factory")
+        await track_usage(user_id, "reels")
 
     elif action == "ideas":
         await message.answer("💡 Генерирую идеи...")
@@ -436,6 +442,9 @@ async def v2_generate_content(message: Message, state: FSMContext):
         await track_usage(user_id, "content_pack")
 
     else:
+        if not await can_use_feature(user_id, "content_factory"):
+            await message.answer("❌ Лимит постов на сегодня закончился. Оформи тариф выше.")
+            return
         await message.answer("✍️ Пишу пост...")
         result = await ask_ai(build_post_prompt(prompt, style_block, profile_block, memory_block, content_goal))
         await send_long(message, result)

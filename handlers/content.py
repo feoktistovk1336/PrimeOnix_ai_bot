@@ -630,6 +630,13 @@ async def save_style_description(message: Message, state: FSMContext):
 
 @router.message(F.text == "🧠 Обучить стилю")
 async def learn_style_start(message: Message, state: FSMContext):
+    if not await can_use_feature(message.from_user.id, "style_train"):
+        await message.answer(
+            "🔒 Обучение стилю доступно с тарифа Premium.\n\n"
+            "Можно продолжать пользоваться базовой генерацией, а для накопительного стиля открой Premium или PRO.",
+            reply_markup=style_menu,
+        )
+        return
     await state.clear()
     await state.set_state(ContentState.waiting_style_sample)
 
@@ -669,7 +676,7 @@ async def save_style_sample_handler(message: Message, state: FSMContext):
         )
         return
 
-    await message.answer("🧠 Анализирую стиль и добавляю в AI-профиль...")
+    await message.answer("🧠 Анализирую структуру, тон, эмодзи, длину абзацев и подачу. Добавляю в AI-профиль...")
 
     previous = await get_style_samples(user_id, limit=5)
     previous_block = "\n\n".join([row[1] or row[0][:800] for row in previous]) if previous else ""
@@ -724,6 +731,7 @@ async def save_style_sample_handler(message: Message, state: FSMContext):
 
     await save_user_style(user_id, combined_style)
     await save_style_sample(user_id, sample, brand_brain)
+    await track_usage(user_id, "style_train")
     await state.clear()
 
     await message.answer(
@@ -1212,8 +1220,7 @@ async def process_content_prompt(message: Message, state: FSMContext):
             await track_usage(user_id, "content_pack")
 
             await message.answer(
-                "✅ Контент-пак готов\n\n"
-                "Что можно сделать дальше?",
+                "✅ Контент-пак готов",
                 reply_markup=after_generation_menu
             )
 
@@ -1264,8 +1271,7 @@ async def process_content_prompt(message: Message, state: FSMContext):
             await send_long(message, result)
 
             await message.answer(
-                "Готово ✅\n\n"
-                "Что можно сделать дальше?",
+                "✅ Готово",
                 reply_markup=after_generation_menu
             )
 
@@ -1333,11 +1339,7 @@ async def process_content_prompt(message: Message, state: FSMContext):
 
                 await send_long(message, post_text)
 
-                await message.answer(
-                    "Готово ✅\n\n"
-                    "Что можно сделать дальше?",
-                    reply_markup=after_generation_menu
-                )
+                await message.answer("✅ Готово", reply_markup=after_generation_menu)
 
                 await track_usage(
                     user_id,
@@ -1373,6 +1375,10 @@ async def process_content_prompt(message: Message, state: FSMContext):
     # =========================
 
     if action == "carousel":
+
+        if not await can_use_feature(user_id, "carousel"):
+            await message.answer("❌ Лимит каруселей на сегодня закончился. Оформи тариф выше.")
+            return
 
         async def generate_carousel_task():
 
@@ -1425,12 +1431,11 @@ async def process_content_prompt(message: Message, state: FSMContext):
 
             await track_usage(
                 user_id,
-                "content_factory"
+                "carousel"
             )
 
             await message.answer(
-                "🎠 Карусель готова ✅\n\n"
-                "Что можно сделать дальше?",
+                "🎠 Карусель готова ✅",
                 reply_markup=after_generation_menu
             )
 
@@ -1456,6 +1461,10 @@ async def process_content_prompt(message: Message, state: FSMContext):
 
     if action == "reels":
 
+        if not await can_use_feature(user_id, "reels"):
+            await message.answer("❌ Лимит Reels на сегодня закончился. Оформи тариф выше.")
+            return
+
         async def generate_reels_task():
 
             result = await ask_ai(
@@ -1473,12 +1482,11 @@ async def process_content_prompt(message: Message, state: FSMContext):
 
             await track_usage(
                 user_id,
-                "content_factory"
+                "reels"
             )
 
             await message.answer(
-                "🎬 Reels-сценарий готов ✅\n\n"
-                "Что можно сделать дальше?",
+                "🎬 Reels-пакет готов ✅",
                 reply_markup=after_generation_menu
             )
 
@@ -1519,11 +1527,7 @@ async def process_content_prompt(message: Message, state: FSMContext):
 
             await send_long(message, result)
 
-            await message.answer(
-                "💡 Идеи готовы ✅\n\n"
-                "Что можно сделать дальше?",
-                reply_markup=after_generation_menu
-            )
+            await message.answer("💡 Идеи готовы ✅", reply_markup=after_generation_menu)
 
         plan = await get_user_plan(user_id)
 
@@ -1561,11 +1565,7 @@ async def process_content_prompt(message: Message, state: FSMContext):
 
             await send_long(message, result)
 
-            await message.answer(
-                "📅 Контент-план готов ✅\n\n"
-                "Что можно сделать дальше?",
-                reply_markup=after_generation_menu
-            )
+            await message.answer("📅 Контент-план готов ✅", reply_markup=after_generation_menu)
 
         plan = await get_user_plan(user_id)
 

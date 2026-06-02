@@ -25,7 +25,10 @@ async def cabinet(message: Message):
 
     features = [
         ("content_factory", "✍️ Посты"),
-        ("post_image", "🖼 Картинки"),
+        ("post_image", "🖼 Пост+картинка"),
+        ("carousel", "🎠 Карусели"),
+        ("reels", "🎬 Reels"),
+        ("ai_chat", "🤖 AI Чат"),
         ("content_pack", "🚀 Контент-пак"),
         ("rewrite", "✍️ Rewrite"),
         ("brand_rewrite", "🎭 Brand Voice"),
@@ -35,12 +38,8 @@ async def cabinet(message: Message):
 
     for feature, title in features:
         used = await get_daily_usage(user_id, feature)
-
-        if tariff["unlimited"]:
-            limits_text += f"{title}: {used}/∞\n"
-        else:
-            limit = await get_feature_limit(user_id, feature)
-            limits_text += f"{title}: {used}/{limit}\n"
+        limit = await get_feature_limit(user_id, feature)
+        limits_text += f"{title}: {used}/{limit}\n"
 
     await message.answer(
         "📊 Личный кабинет\n\n"

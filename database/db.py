@@ -800,12 +800,30 @@ async def get_user_memory(user_id: int):
     }
 
 TARIFFS = {
-    "free": {"title": "FREE", "bonus": 0, "unlimited": False, "price": 0},
-    "start_premium": {"title": "Start Premium", "bonus": 2, "unlimited": False, "price": 30},
-    "plus": {"title": "Plus", "bonus": 4, "unlimited": False, "price": 50},
-    "vip": {"title": "VIP", "bonus": 7, "unlimited": False, "price": 100},
-    "premium": {"title": "Premium", "bonus": 10, "unlimited": False, "price": 160},
-    "pro": {"title": "PRO", "bonus": 999999, "unlimited": True, "price": 500},
+    "free": {
+        "title": "FREE", "price": 0, "unlimited": False,
+        "limits": {"content_factory": 1, "post_image": 1, "carousel": 0, "reels": 0, "ai_chat": 10, "content_pack": 0, "rewrite": 1, "brand_rewrite": 0, "style_train": 0, "queue": 0}
+    },
+    "start_premium": {
+        "title": "Start Premium", "price": 119, "unlimited": False,
+        "limits": {"content_factory": 3, "post_image": 2, "carousel": 1, "reels": 0, "ai_chat": 20, "content_pack": 0, "rewrite": 3, "brand_rewrite": 1, "style_train": 0, "queue": 0}
+    },
+    "plus": {
+        "title": "Plus", "price": 179, "unlimited": False,
+        "limits": {"content_factory": 5, "post_image": 4, "carousel": 1, "reels": 0, "ai_chat": 50, "content_pack": 1, "rewrite": 5, "brand_rewrite": 2, "style_train": 0, "queue": 1}
+    },
+    "vip": {
+        "title": "VIP", "price": 299, "unlimited": False,
+        "limits": {"content_factory": 8, "post_image": 6, "carousel": 2, "reels": 1, "ai_chat": 100, "content_pack": 2, "rewrite": 8, "brand_rewrite": 4, "style_train": 0, "queue": 1}
+    },
+    "premium": {
+        "title": "Premium", "price": 399, "unlimited": False,
+        "limits": {"content_factory": 12, "post_image": 8, "carousel": 3, "reels": 2, "ai_chat": 300, "content_pack": 3, "rewrite": 12, "brand_rewrite": 8, "style_train": 3, "queue": 1}
+    },
+    "pro": {
+        "title": "PRO", "price": 599, "unlimited": False,
+        "limits": {"content_factory": 16, "post_image": 10, "carousel": 4, "reels": 3, "ai_chat": 600, "content_pack": 4, "rewrite": 16, "brand_rewrite": 10, "style_train": 999, "queue": 1}
+    },
 }
 
 
@@ -863,21 +881,20 @@ async def get_tariff_info(user_id: int):
 
 async def get_feature_limit(user_id: int, feature: str):
     plan = await get_user_plan(user_id)
-
     tariff = TARIFFS.get(plan, TARIFFS["free"])
 
-    if tariff["unlimited"]:
-        return 999999
+    limits = tariff.get("limits", {})
+    if feature in limits:
+        return int(limits[feature])
 
+    # Fallback for old/internal features not yet mapped to the new tariff grid.
     base_limit = await get_setting(f"limit_{feature}")
-
     if not base_limit:
-        base_limit = 3
-    else:
-        base_limit = int(base_limit)
-
-    return base_limit + tariff["bonus"]    
-
+        return 0
+    try:
+        return int(base_limit)
+    except Exception:
+        return 0
 async def has_used_trial(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
