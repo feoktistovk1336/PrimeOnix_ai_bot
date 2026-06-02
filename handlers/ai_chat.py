@@ -1,0 +1,75 @@
+from aiogram import Router, F
+from aiogram.types import Message
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.context import FSMContext
+
+from config import settings
+from keyboards import ai_chat_menu, main_menu, admin_main_menu
+from database.db import register_user, get_user_profile, get_user_style
+from services.assistant_chat import ask_primeonix_assistant
+from services.sender import send_long
+
+router = Router()
+
+
+class AIChatState(StatesGroup):
+    waiting_question = State()
+
+
+def _home(user_id: int):
+    return admin_main_menu if settings.ADMIN_ID and user_id == settings.ADMIN_ID else main_menu
+
+
+async def _profile_block(user_id: int) -> str:
+    profile = await get_user_profile(user_id)
+    return (
+        "AI Профиль пользователя:\n"
+        f"Ниша: {profile.get('niche') or 'не указано'}\n"
+        f"Аудитория: {profile.get('audience') or 'не указано'}\n"
+        f"Оффер: {profile.get('offer') or 'не указано'}\n"
+        f"Город: {profile.get('city') or 'не указано'}\n"
+        f"CTA: {profile.get('cta') or 'не указано'}\n"
+        f"Цель контента: {profile.get('content_goal') or 'не указано'}\n"
+    )
+
+
+async def _style_block(user_id: int) -> str:
+    style = await get_user_style(user_id)
+    return "Стиль пользователя:\n" + (style or "не обучен")[:2500]
+
+
+@router.message(F.text == "🤖 AI Чат")
+async def open_ai_chat(message: Message, state: FSMContext):
+    await state.clear()
+    await state.set_state(AIChatState.waiting_question)
+    await register_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    await message.answer(
+        "🤖 AI Чат\n\n"
+        "Можешь спрашивать меня как обычного помощника: про контент, бота, n8n, Instagram, Reels, идеи, тексты, продажи.\n\n"
+        "Я буду учитывать твой AI Профиль и обученный стиль.\n\n"
+        "Чтобы выйти — нажми «⬅️ Главное меню».",
+        reply_markup=ai_chat_menu,
+    )
+
+
+@router.message(AIChatState.waiting_question)
+async def answer_ai_chat(message: Message, state: FSMContext):
+    if message.text == "⬅️ Главное меню":
+        await state.clear()
+        await message.answer("Главное меню 👇", reply_markup=_home(message.from_user.id))
+        return
+
+    question = (message.text or message.caption or "").strip()
+    if len(question) < 2:
+        await message.answer("Напиши вопрос текстом 👇", reply_markup=ai_chat_menu)
+        return
+
+    await message.answer("🤖 Думаю...")
+    profile = await _profile_block(message.from_user.id)
+    style = await _style_block(message.from_user.id)
+    try:
+        answer = await ask_primeonix_assistant(question, profile, style)
+    except Exception as exc:
+        answer = f"⚠️ AI-чат не ответил. Ошибка: {exc}"
+    await send_long(message, answer)
+    await message.answer("Можешь задать следующий вопрос 👇", reply_markup=ai_chat_menu)
