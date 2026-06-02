@@ -1,0 +1,13 @@
+PrimeOnix v9.3 webhook links for Railway
+
+ВАЖНО: в Railway вставляем production webhook URL формата /webhook/<path>, а не /workflow/...
+Если Cloudflare tunnel поменяется, нужно заменить домен во всех переменных.
+
+N8N_SYSTEM_WEBHOOK=https://php-spaces-hypothetical-eating.trycloudflare.com/webhook/primeonix-system
+N8N_TELEGRAM_WEBHOOK=https://php-spaces-hypothetical-eating.trycloudflare.com/webhook/primeonix-telegram
+N8N_INSTAGRAM_WEBHOOK=https://php-spaces-hypothetical-eating.trycloudflare.com/webhook/primeonix-instagram
+N8N_CAROUSEL_WEBHOOK=https://php-spaces-hypothetical-eating.trycloudflare.com/webhook/primeonix-carousel
+N8N_REELS_WEBHOOK=https://php-spaces-hypothetical-eating.trycloudflare.com/webhook/primeonix-reels
+N8N_FUNNEL_WEBHOOK=https://php-spaces-hypothetical-eating.trycloudflare.com/webhook/primeonix-funnel
+N8N_BROADCAST_WEBHOOK=https://php-spaces-hypothetical-eating.trycloudflare.com/webhook/primeonix-broadcast
+N8N_PRO_WEBHOOK=https://php-spaces-hypothetical-eating.trycloudflare.com/webhook/primeonix-pro

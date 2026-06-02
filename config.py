@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     BOT_TOKEN: str
 
     OPENAI_API_KEY: str | None = None
+    OPENROUTER_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
     REPLICATE_API_TOKEN: str | None = None
 

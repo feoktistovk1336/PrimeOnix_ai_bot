@@ -32,6 +32,7 @@ from handlers.ig_tg_funnel import router as ig_tg_funnel_router
 from handlers.admin_prime import router as admin_prime_router
 from handlers.prime_viral import router as prime_viral_router
 from handlers.prime_autopost import router as prime_autopost_router
+from handlers.ai_chat import router as ai_chat_router
 
 
 bot = Bot(token=settings.BOT_TOKEN)
@@ -46,6 +47,7 @@ dp.include_router(admin_prime_router)
 dp.include_router(admin_router)
 dp.include_router(prime_viral_router)
 dp.include_router(prime_autopost_router)
+dp.include_router(ai_chat_router)
 dp.include_router(content_router)
 dp.include_router(setup_router)
 dp.include_router(analyze_router)
