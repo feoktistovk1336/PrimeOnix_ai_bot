@@ -905,33 +905,45 @@ async def publish_last_to_instagram(message: Message, state: FSMContext):
     if not last:
         return
 
-    # Пока Meta/Instagram API не подключены полностью, безопасно готовим пакет через n8n.
-    from services.n8n_client import call_n8n
-    await message.answer("📲 Готовлю Instagram-пакет через n8n...")
-    result = await call_n8n({
-        "action": "publish_instagram_prepare",
-        "workflow": "instagram",
-        "platform": "instagram",
-        "content_type": last.get("content_type") or "post",
-        "source": "telegram_bot_admin",
-        "user_id": message.from_user.id,
-        "topic": last.get("topic"),
-        "content": last.get("content"),
-        "media_url": last.get("image_url") or last.get("media_url"),
-        "expected_response": {"text": "Instagram package ready for publishing"},
-    }, timeout=120)
-    if result.get("ok"):
+    caption = (last.get("caption") or last.get("content") or "")[:2200]
+    image_url = last.get("image_url") or last.get("media_url")
+    image_urls = last.get("image_urls") or []
+    if not image_urls and isinstance(last.get("slides"), list):
+        image_urls = [s.get("image_url") or s.get("media_url") for s in last.get("slides") if isinstance(s, dict)]
+
+    from services.instagram_publisher import instagram_config_status, publish_photo, publish_carousel
+    ok, missing, cfg = instagram_config_status()
+    if not ok:
         await message.answer(
-            "✅ Instagram-пакет подготовлен.\n\n"
-            "Автопубликацию включим после полного подключения Meta/Metricool.\n\n"
-            f"{result.get('text') or result.get('raw') or ''}",
+            "⚠️ Instagram API ещё не подключен.\n\n"
+            "В Railway нужны переменные: META_ACCESS_TOKEN и IG_USER_ID.\n"
+            "После этого кнопка сможет публиковать посты/карусели через Meta Graph API.\n\n"
+            "Пока материал подготовлен, но не опубликован.",
             reply_markup=prime_after_generation_menu,
         )
-    else:
-        await message.answer(
-            f"❌ Instagram-пакет не подготовлен.\nОшибка: {result.get('error')}\nДетали: {result.get('message') or result.get('raw') or result.get('data')}",
-            reply_markup=prime_after_generation_menu,
-        )
+        return
+
+    await message.answer("📲 Отправляю материал в Instagram...")
+    try:
+        public_images = [u for u in image_urls if isinstance(u, str) and u.startswith("http")]
+        if len(public_images) >= 2:
+            result = await publish_carousel(public_images, caption)
+        elif image_url and isinstance(image_url, str) and image_url.startswith("http"):
+            result = await publish_photo(image_url, caption)
+        else:
+            await message.answer(
+                "⚠️ Для публикации Instagram нужен публичный https URL картинки.\n\n"
+                "Сейчас изображение пришло как файл/base64 для Telegram. На следующем шаге подключим media-hosting или Metricool, чтобы бот мог публиковать такие картинки напрямую в Instagram.",
+                reply_markup=prime_after_generation_menu,
+            )
+            return
+
+        if result.get("ok"):
+            await message.answer("✅ Опубликовано в Instagram.", reply_markup=prime_after_generation_menu)
+        else:
+            await message.answer(f"❌ Instagram не опубликовал материал.\n\n{result}", reply_markup=prime_after_generation_menu)
+    except Exception as exc:
+        await message.answer(f"❌ Ошибка публикации Instagram: {exc}", reply_markup=prime_after_generation_menu)
 
 
 @router.message(F.text == "🖼 Сгенерировать картинку")
