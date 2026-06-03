@@ -105,6 +105,8 @@ class AdminPrimeN8NState(StatesGroup):
     waiting_broadcast_text = State()
     waiting_delete_queue_id = State()
     waiting_schedule_queue = State()
+    waiting_edit_queue_item = State()
+    waiting_mark_ready_queue_id = State()
 
 
 
@@ -361,7 +363,7 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
         if not items:
             await message.answer(
                 "📌 <b>Контент-очередь пуста</b>\n\n"
-                "Сгенерируй материал и нажми «📅 В очередь контента».\n\n"
+                "Сначала сгенерируй материал в «📣 Контент Центр», затем нажми «📅 В очередь контента».\n\n"
                 "Статусы: " + (", ".join([f"{k}: {v}" for k, v in stats.items()]) or "нет"),
                 reply_markup=prime_publish_hub_menu,
                 parse_mode="HTML",
@@ -373,7 +375,7 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
                 f"ID: <code>{it.get('id')}</code> | {it.get('status')} | {it.get('platform')} | {it.get('content_type')}\n"
                 f"Тема: {it.get('topic')}\n"
             )
-        lines.append("Команды: удалить ID / готово ID / запланировать ID завтра 18:00")
+        lines.append("Действия: удалить ID, готово ID, редактировать ID новый текст, запланировать ID завтра 18:00")
         await message.answer("\n".join(lines), reply_markup=prime_publish_hub_menu, parse_mode="HTML")
         return
 
@@ -392,11 +394,18 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
         return
 
     if message.text == "✅ Отметить готово":
-        await message.answer("✅ Чтобы отметить материал готовым, отправь команду: готово ID\nНапример: готово 3", reply_markup=prime_publish_hub_menu)
+        await state.set_state(AdminPrimeN8NState.waiting_mark_ready_queue_id)
+        await message.answer("✅ Отправь ID материала, который нужно отметить готовым.\n\nПример: 3", reply_markup=prime_publish_hub_menu)
         return
 
     if message.text == "✏️ Редактировать материал":
-        await message.answer("✏️ Чтобы отредактировать материал в очереди, отправь: редактировать ID новый текст.\nНапример: редактировать 3 Сделай текст короче и сильнее.", reply_markup=prime_publish_hub_menu)
+        await state.set_state(AdminPrimeN8NState.waiting_edit_queue_item)
+        await message.answer(
+            "✏️ Отправь ID материала и новый текст.\n\n"
+            "Пример: 3 Сделай текст короче и сильнее.\n\n"
+            "Также можно написать: редактировать 3 новый текст",
+            reply_markup=prime_publish_hub_menu,
+        )
         return
 
     if message.text == "🔄 Обновить очередь":
@@ -433,17 +442,13 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
     # Реальные админские данные без заглушек.
     if message.text == "👥 Список пользователей":
         import aiosqlite
-        from database.db import DB_PATH
+        from database.db import DB_PATH, register_user
+        await register_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
         async with aiosqlite.connect(DB_PATH) as db:
             cur = await db.execute("SELECT user_id, username, first_name, plan, pro_until, created_at FROM users ORDER BY created_at DESC LIMIT 20")
             rows = await cur.fetchall()
         if not rows:
-            from database.db import register_user
-            await register_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-            cur = await db.execute("SELECT user_id, username, first_name, plan, pro_until, created_at FROM users ORDER BY created_at DESC LIMIT 20")
-            rows = await cur.fetchall()
-        if not rows:
-            await message.answer("👥 Пользователей пока нет в базе. Но админ будет добавлен в базу после следующего /start или входа в админку.", reply_markup=prime_users_menu)
+            await message.answer("👥 Пользователей пока нет в базе.", reply_markup=prime_users_menu)
             return
         lines = ["👥 <b>Последние пользователи</b>\n"]
         for uid, username, first_name, plan, pro_until, created_at in rows:
@@ -483,7 +488,7 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
         await message.answer("🚫 Отправь user_id пользователя, у которого нужно забрать PRO.", reply_markup=prime_users_menu)
         return
 
-    if message.text in {"👥 Статистика пользователей", "⚡ Статистика генераций", "💎 Статистика подписок", "📈 Статистика лимитов", "🎯 Статистика воронок", "📲 Статистика Instagram", "📢 Статистика Telegram", "🚨 Ошибки n8n"}:
+    if message.text in {"👥 Статистика пользователей", "⚡ Статистика генераций", "💎 Статистика подписок", "📈 Статистика лимитов", "🎯 Статистика воронок", "📲 Статистика Instagram", "📢 Статистика Telegram", "📊 Статистика Instagram", "📊 Статистика Telegram", "🚨 Ошибки n8n"}:
         import aiosqlite
         from database.db import DB_PATH, get_stats
         stats = await get_stats()
@@ -506,7 +511,9 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
             "📈 Статистика лимитов": "📈 <b>Статистика лимитов</b>",
             "🎯 Статистика воронок": "🎯 <b>Статистика воронок</b>",
             "📲 Статистика Instagram": "📲 <b>Статистика Instagram</b>",
+            "📊 Статистика Instagram": "📲 <b>Статистика Instagram</b>",
             "📢 Статистика Telegram": "📢 <b>Статистика Telegram</b>",
+            "📊 Статистика Telegram": "📢 <b>Статистика Telegram</b>",
             "🚨 Ошибки n8n": "🚨 <b>Ошибки n8n</b>",
         }
         extra = ""
@@ -632,7 +639,7 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
 
     section_keyboard = prime_panel_menu
     text_info = ADMIN_ACTION_TEXTS[message.text]
-    if message.text in {"👥 Статистика пользователей", "⚡ Статистика генераций", "💎 Статистика подписок", "📈 Статистика лимитов", "🎯 Статистика воронок", "📲 Статистика Instagram", "📢 Статистика Telegram", "🚨 Ошибки n8n"}:
+    if message.text in {"👥 Статистика пользователей", "⚡ Статистика генераций", "💎 Статистика подписок", "📈 Статистика лимитов", "🎯 Статистика воронок", "📲 Статистика Instagram", "📢 Статистика Telegram", "📊 Статистика Instagram", "📊 Статистика Telegram", "🚨 Ошибки n8n"}:
         section_keyboard = prime_stats_menu
     elif message.text in {"🧪 Проверить n8n", "🧪 Проверить OpenRouter", "🧪 Проверить Telegram Bot", "🧪 Проверить IG Pipeline", "🧪 Проверить Image Generator", "🧪 Проверить Video Generator", "🔗 Webhooks n8n", "📜 Логи"}:
         section_keyboard = prime_system_check_menu
@@ -1230,6 +1237,60 @@ async def admin_broadcast_text_apply(message: Message, state: FSMContext):
         reply_markup=prime_broadcast_menu,
         parse_mode='HTML',
     )
+
+
+@router.message(AdminPrimeN8NState.waiting_mark_ready_queue_id)
+async def admin_mark_ready_queue_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    q = (message.text or '').strip()
+    if not q.isdigit():
+        await message.answer('Отправь числовой ID материала.', reply_markup=prime_publish_hub_menu); return
+    from services.content_queue import mark_prime_content, STATUS_READY
+    ok = mark_prime_content(int(q), STATUS_READY)
+    await state.clear()
+    await message.answer(('✅ Материал отмечен готовым.' if ok else '⚠️ Материал с таким ID не найден.'), reply_markup=prime_publish_hub_menu)
+
+@router.message(AdminPrimeN8NState.waiting_edit_queue_item)
+async def admin_edit_queue_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    text = (message.text or '').strip()
+    if text.lower().startswith('редактировать '):
+        text = text.split(' ', 1)[1].strip()
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[0].isdigit():
+        await message.answer('Отправь: ID новый текст.\nПример: 3 Сделай текст короче и сильнее.', reply_markup=prime_publish_hub_menu); return
+    from services.content_queue import update_prime_content
+    item = update_prime_content(int(parts[0]), content=parts[1], status='ready')
+    await state.clear()
+    if not item:
+        await message.answer('⚠️ Материал с таким ID не найден.', reply_markup=prime_publish_hub_menu); return
+    await message.answer(f'✏️ Материал <code>{parts[0]}</code> обновлён и отмечен ready.', reply_markup=prime_publish_hub_menu, parse_mode='HTML')
+
+@router.message(F.text.regexp(r'^(готово|удалить|редактировать)\s+\d+'))
+async def admin_queue_text_commands(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    text = (message.text or '').strip()
+    cmd, rest = text.split(maxsplit=1)
+    parts = rest.split(maxsplit=1)
+    item_id = int(parts[0])
+    if cmd.lower() == 'готово':
+        from services.content_queue import mark_prime_content, STATUS_READY
+        ok = mark_prime_content(item_id, STATUS_READY)
+        await message.answer(('✅ Материал отмечен готовым.' if ok else '⚠️ Материал с таким ID не найден.'), reply_markup=prime_publish_hub_menu); return
+    if cmd.lower() == 'удалить':
+        from services.content_queue import delete_prime_content
+        ok = delete_prime_content(item_id)
+        await message.answer(('🗑 Материал удалён.' if ok else '⚠️ Материал с таким ID не найден.'), reply_markup=prime_publish_hub_menu); return
+    if cmd.lower() == 'редактировать':
+        if len(parts) < 2:
+            await message.answer('✏️ После ID напиши новый текст материала.', reply_markup=prime_publish_hub_menu); return
+        from services.content_queue import update_prime_content
+        item = update_prime_content(item_id, content=parts[1], status='ready')
+        await message.answer((f'✏️ Материал <code>{item_id}</code> обновлён.' if item else '⚠️ Материал с таким ID не найден.'), reply_markup=prime_publish_hub_menu, parse_mode='HTML')
+        return
 
 @router.message(AdminPrimeN8NState.waiting_delete_queue_id)
 async def admin_delete_queue_apply(message: Message, state: FSMContext):

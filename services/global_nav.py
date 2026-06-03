@@ -28,6 +28,7 @@ from keyboards import (
     prime_users_menu,
     prime_limits_menu,
     prime_publish_hub_menu,
+    prime_stats_menu,
 )
 
 
@@ -73,7 +74,7 @@ PRIME_BUTTONS = {
     "📣 Контент Центр", "📢 Telegram", "🎯 Воронки IG→TG", "📬 Рассылки", "👥 Пользователи", "💎 Подписки и лимиты",
     "📈 Статистика", "📦 Очередь", "🤖 AI Лаборатория", "🧪 Проверки", "🧪 Проверка системы", "🧭 Карта системы",
     "📬 Новая рассылка", "📣 Рассылка всем", "💎 Рассылка PRO", "🆓 Рассылка FREE", "🎯 Рассылка по сегменту",
-    "➕ Выдать бонусы", "🚫 Забрать PRO", "🔄 Сбросить лимиты", "📊 Проверить подписку", "⛔ Заблокировать", "📜 История пользователя", "🔎 Найти пользователя", "👥 Список пользователей", "⚙️ Лимиты FREE", "⚙️ Лимиты PRO", "🕒 Запланированные", "📜 История рассылок", "🗑 Удалить из очереди", "✅ Отметить готово", "✏️ Редактировать материал", "🔄 Обновить очередь",
+    "➕ Выдать бонусы", "🚫 Забрать PRO", "🔄 Сбросить лимиты", "📊 Проверить подписку", "⛔ Заблокировать", "📜 История пользователя", "🔎 Найти пользователя", "👥 Список пользователей", "⚙️ Лимиты FREE", "⚙️ Лимиты PRO", "🕒 Запланированные", "📜 История рассылок", "🗑 Удалить из очереди", "✅ Отметить готово", "✏️ Редактировать материал", "🔄 Обновить очередь", "📊 Статистика Telegram", "📊 Статистика Instagram", "📲 Статистика Instagram", "📢 Статистика Telegram",
 }
 
 ALL_NAV_BUTTONS = MAIN_BUTTONS | CREATE_BUTTONS | CONTENT_BUTTONS | PROFILE_BUTTONS | ADMIN_BUTTONS | PRIME_BUTTONS
@@ -225,7 +226,40 @@ class GlobalNavigationMiddleware(BaseMiddleware):
                 await state.set_state(AdminPrimeN8NState.waiting_delete_queue_id); await message.answer("🗑 Отправь ID материала из очереди для удаления.", reply_markup=prime_publish_hub_menu); return True
             if text == "📅 Публикация позже":
                 await state.set_state(AdminPrimeN8NState.waiting_schedule_queue); await message.answer("📅 Отправь: ID и время.\n\nПример: 3 завтра 18:00", reply_markup=prime_publish_hub_menu); return True
+            if text == "✏️ Редактировать материал":
+                await state.set_state(AdminPrimeN8NState.waiting_edit_queue_item); await message.answer("✏️ Отправь ID материала и новый текст.\n\nПример: 3 Сделай текст короче и сильнее.", reply_markup=prime_publish_hub_menu); return True
+            if text == "✅ Отметить готово":
+                await state.set_state(AdminPrimeN8NState.waiting_mark_ready_queue_id); await message.answer("✅ Отправь ID материала, который нужно отметить готовым.", reply_markup=prime_publish_hub_menu); return True
+            if text in {"🕒 Посмотреть очередь", "📌 Очередь публикаций", "🔄 Обновить очередь"}:
+                from services.content_queue import list_prime_content, queue_stats
+                items = list_prime_content(user_id=None, limit=10)
+                stats = queue_stats()
+                if not items:
+                    await message.answer("📌 Контент-очередь пуста.\n\nСначала сгенерируй материал в «📣 Контент Центр», затем нажми «📅 В очередь контента».\n\nСтатусы: " + (", ".join([f"{k}: {v}" for k, v in stats.items()]) or "нет"), reply_markup=prime_publish_hub_menu)
+                    return True
+                lines = ["📌 Очередь публикаций\n"]
+                for it in items:
+                    lines.append(f"ID: {it.get('id')} | {it.get('status')} | {it.get('platform')} | {it.get('content_type')}\nТема: {it.get('topic')}\n")
+                await message.answer("\n".join(lines), reply_markup=prime_publish_hub_menu)
+                return True
             await message.answer("📦 Раздел очереди. Выбери действие внутри очереди — создание контента здесь не запускается.", reply_markup=prime_publish_hub_menu)
+            return True
+
+        if text in {"📊 Статистика Telegram", "📊 Статистика Instagram", "📲 Статистика Instagram", "📢 Статистика Telegram"}:
+            if not owner:
+                await message.answer("❌ Нет доступа")
+                return True
+            from database.db import get_stats
+            data = await get_stats()
+            title = "📲 Статистика Instagram" if "Instagram" in text else "📢 Статистика Telegram"
+            await message.answer(
+                f"{title}\n\n"
+                f"👥 Пользователей: {data.get('total_users', 0)}\n"
+                f"💎 PRO: {data.get('total_pro', 0)}\n"
+                f"⚡ Генераций: {data.get('total_generations', 0)}\n\n"
+                "Детальную статистику по платформам подключим к n8n/БД после теста публикаций.",
+                reply_markup=prime_stats_menu,
+            )
             return True
 
         if text == "👑 Админ" or text == "⬅️ Назад в админку":
