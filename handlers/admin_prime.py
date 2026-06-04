@@ -138,7 +138,7 @@ def _format_rubric_pack(posts: list[dict]) -> str:
         preview = content[:700] + ("…" if len(content) > 700 else "")
         lines.append(html.escape(preview))
         lines.append("")
-    lines.append("Дальше можно опубликовать всё сразу, отредактировать выбранный пост или поставить пакет в очередь.")
+    lines.append("Дальше: 📤 опубликовать всё сразу, ✏️ отредактировать выбранный пост, 📅 поставить пакет в очередь или 🧹 сбросить пакет.")
     return "\n".join(lines).strip()
 
 
@@ -156,6 +156,7 @@ class AdminPrimeN8NState(StatesGroup):
     waiting_schedule_queue = State()
     waiting_edit_queue_item = State()
     waiting_mark_ready_queue_id = State()
+    waiting_custom_queue_post = State()
     waiting_rubric_topic = State()
     waiting_rubric_edit_choice = State()
     waiting_rubric_edit_text = State()
@@ -194,7 +195,7 @@ async def _send_queue(message: Message, title: str = "📌 Контент-оче
         await message.answer(
             f"{title}\n\n"
             "Очередь пока пустая.\n\n"
-            "Сначала сгенерируй материал в «📣 Контент Центр», затем нажми «📅 В очередь контента».\n\n"
+            "Сначала сгенерируй материал в «📣 Контент Центр» или нажми «➕ Создать свой пост».\n\n"
             f"Статусы: {_queue_status_line(stats)}",
             reply_markup=prime_publish_hub_menu,
             parse_mode="HTML",
@@ -314,6 +315,23 @@ HUBS = {
         "Выбери формат входа 👇",
         prime_funnel_hub_menu,
     ),
+    "🗓 Рубрика дня": (
+        "🗓 <b>Рубрика дня</b>\n\n"
+        "Могу создать сразу весь пакет рубрик или отдельный пост по выбранной рубрике.\n\n"
+        "Что входит в пакет:\n"
+        "⚡ Кейс дня — разбор ситуации/результата.\n"
+        "🤖 Нейросеть недели — полезный инструмент и применение.\n"
+        "📈 Разбор бизнеса подписчика — что улучшить и автоматизировать.\n"
+        "🚀 Автоматизация дня — готовая схема внедрения.\n"
+        "💰 Сколько стоит внедрение — понятная разбивка цены.\n\n"
+        "После генерации появятся кнопки: опубликовать всё, отредактировать пост, поставить в очередь, сбросить пакет.👇",
+        prime_rubric_day_menu,
+    ),
+    "📬 Рассылка": (
+        "📬 <b>Рассылка</b>\n\n"
+        "Рассылки всем, PRO, FREE, по сегментам и по воронкам.",
+        prime_broadcast_menu,
+    ),
     "📬 Рассылки": (
         "📬 <b>Рассылки</b>\n\n"
         "Рассылки всем, PRO, FREE, по сегментам и по воронкам.",
@@ -423,11 +441,17 @@ async def start_rubric_day(message: Message, state: FSMContext):
     await state.update_data(rubric_selected=selected)
     await state.set_state(AdminPrimeN8NState.waiting_rubric_topic)
     await message.answer(
-        "🗓 Рубрика дня\n\n"
+        "🗓 <b>Рубрика дня</b>\n\n"
+        "Выбрано: " + ("все рубрики" if choice == "all" else str(choice)) + "\n\n"
         "Напиши тему, нишу или продукт, под который сделать рубрики.\n\n"
-        "Можно написать коротко: «PrimeOnix AI, услуги по ботам и контенту».\n"
-        "Если оставить общую тему — сделаю под твои услуги PrimeOnix.",
+        "Пример: «PrimeOnix AI, услуги по ботам и контенту».\n\n"
+        "После генерации сможешь:\n"
+        "📤 опубликовать всё сразу;\n"
+        "✏️ отредактировать выбранный пост;\n"
+        "📅 поставить в очередь с датами;\n"
+        "🧹 сбросить пакет.",
         reply_markup=prime_rubric_day_menu,
+        parse_mode="HTML",
     )
 
 
@@ -445,6 +469,11 @@ async def generate_rubric_day(message: Message, state: FSMContext):
     if text in {"⬅️ Назад в админку"}:
         await state.clear()
         await message.answer(PRIME_PANEL_TEXT, reply_markup=prime_panel_menu, parse_mode="HTML")
+        return
+    if text == "🗓 Рубрика дня":
+        await state.clear()
+        hub_text, hub_keyboard = HUBS["🗓 Рубрика дня"]
+        await message.answer(hub_text, reply_markup=hub_keyboard, parse_mode="HTML")
         return
     if text in RUBRIC_ALIASES:
         choice = RUBRIC_ALIASES.get(text)
@@ -530,6 +559,7 @@ ADMIN_ACTION_TEXTS = {
     "✅ Отметить готово": "Очередь: отметить материал готовым.",
     "📤 Подготовить к публикации": "Очередь: подготовить материал к публикации.",
     "📅 Публикация позже": "Очередь: запланировать материал.",
+    "➕ Создать свой пост": "Очередь: создать свой пост вручную и сохранить для планирования.",
     "🗑 Удалить из очереди": "Очередь: удалить материал по ID.",
     "🕒 Посмотреть очередь": "Очередь: посмотреть материалы.",
     "🔄 Обновить очередь": "Очередь: обновить и показать актуальные материалы.",
@@ -600,6 +630,21 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
     # ===== Реальные разделы очереди, рассылок, пользователей и диагностики без вылета в главное меню =====
     if message.text in {"📌 Очередь публикаций", "🕒 Посмотреть очередь"}:
         await _send_queue(message)
+        return
+
+    if message.text == "➕ Создать свой пост":
+        await state.set_state(AdminPrimeN8NState.waiting_custom_queue_post)
+        await message.answer(
+            "➕ <b>Создать свой пост в очередь</b>\n\n"
+            "Отправь готовый текст поста одним сообщением.\n\n"
+            "После сохранения я дам ID, и его можно будет запланировать через «📅 Публикация позже».\n\n"
+            "Пример планирования после сохранения:\n"
+            "<code>1 завтра 18:00</code>\n"
+            "или\n"
+            "<code>1 08.06.2026 18:00</code>",
+            reply_markup=prime_publish_hub_menu,
+            parse_mode="HTML",
+        )
         return
 
     if message.text == "🗑 Удалить из очереди":
@@ -1195,7 +1240,8 @@ async def ask_rubric_schedule(message: Message, state: FSMContext):
         "1 завтра 10:00\n"
         "2 завтра 15:00\n"
         "3 07.06 12:00\n\n"
-        "Можно отправить «без времени» — я сохраню все рубрики в очередь как draft.",
+        "Можно отправить «без времени» — я сохраню все рубрики в очередь как черновики.\n\n"
+        "После сохранения открой «📦 Очередь» → «🕒 Посмотреть очередь».",
         reply_markup=prime_rubric_after_generation_menu,
     )
 
@@ -1624,6 +1670,40 @@ async def admin_broadcast_text_apply(message: Message, state: FSMContext):
         f"📬 <b>Рассылка подготовлена</b>\n\nСегмент: <code>{segment}</code>\n\nТекст:\n{text}\n\nСледующий шаг: добавим кнопку подтверждения отправки, чтобы случайно не разослать черновик.",
         reply_markup=prime_broadcast_menu,
         parse_mode='HTML',
+    )
+
+
+@router.message(AdminPrimeN8NState.waiting_custom_queue_post)
+async def admin_custom_queue_post_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        return
+    text = (message.text or '').strip()
+    if not text or text in {"⬅️ Назад в админку", "📦 Очередь"}:
+        await message.answer("Отправь текст поста одним сообщением.", reply_markup=prime_publish_hub_menu)
+        return
+    from services.content_queue import add_prime_content, STATUS_READY
+    item = add_prime_content(
+        user_id=message.from_user.id,
+        tool="custom_post",
+        topic=(text.splitlines()[0][:80] if text else "Свой пост"),
+        content=text,
+        status=STATUS_READY,
+        platform="telegram",
+        content_type="custom_post",
+        meta={"source": "admin_custom_queue_post"},
+    )
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Свой пост добавлен в очередь</b>\n\n"
+        f"ID: <code>{item.get('id')}</code>\n"
+        f"Статус: <code>{item.get('status')}</code>\n\n"
+        f"Чтобы запланировать публикацию, нажми «📅 Публикация позже» и отправь:\n"
+        f"<code>{item.get('id')} завтра 18:00</code>\n"
+        f"или\n"
+        f"<code>{item.get('id')} 08.06.2026 18:00</code>",
+        reply_markup=prime_publish_hub_menu,
+        parse_mode="HTML",
     )
 
 
