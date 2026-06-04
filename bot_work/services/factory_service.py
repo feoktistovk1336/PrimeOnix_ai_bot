@@ -1,0 +1,1 @@
+from services.ai_service import generate_content_factory
