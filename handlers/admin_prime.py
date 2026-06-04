@@ -23,6 +23,7 @@ from keyboards import (
     prime_stats_menu,
     prime_checks_menu,
     prime_after_generation_menu,
+    post_action_buttons,
 )
 
 
@@ -108,6 +109,103 @@ class AdminPrimeN8NState(StatesGroup):
     waiting_edit_queue_item = State()
     waiting_mark_ready_queue_id = State()
 
+
+async def _ensure_admin_user(message: Message):
+    """Админ тоже должен попадать в таблицу users, чтобы список пользователей не был пустым."""
+    try:
+        from database.db import register_user
+        u = message.from_user
+        if u:
+            await register_user(u.id, u.username, u.first_name)
+    except Exception:
+        pass
+
+
+def _queue_status_line(stats: dict) -> str:
+    return ", ".join([f"{k}: {v}" for k, v in stats.items()]) or "нет"
+
+
+def _queue_item_line(it: dict) -> str:
+    scheduled = it.get("scheduled_at") or "—"
+    return (
+        f"ID: <code>{it.get('id')}</code> | {it.get('status')} | {it.get('platform')} | {it.get('content_type')}\n"
+        f"Тема: {it.get('topic') or '—'}\n"
+        f"Время: {scheduled}\n"
+    )
+
+
+async def _send_queue(message: Message, title: str = "📌 Контент-очередь"):
+    from services.content_queue import list_prime_content, queue_stats
+    items = list_prime_content(user_id=None, limit=10)
+    stats = queue_stats()
+    if not items:
+        await message.answer(
+            f"{title}\n\n"
+            "Очередь пока пустая.\n\n"
+            "Сначала сгенерируй материал в «📣 Контент Центр», затем нажми «📅 В очередь контента».\n\n"
+            f"Статусы: {_queue_status_line(stats)}",
+            reply_markup=prime_publish_hub_menu,
+            parse_mode="HTML",
+        )
+        return
+    lines = [f"{title}\n"]
+    for it in items:
+        lines.append(_queue_item_line(it))
+    lines.append(
+        "Команды:\n"
+        "• готово ID\n"
+        "• удалить ID\n"
+        "• редактировать ID новый текст\n"
+        "• запланировать ID завтра 18:00"
+    )
+    await message.answer("\n".join(lines), reply_markup=prime_publish_hub_menu, parse_mode="HTML")
+
+
+def _parse_queue_schedule_text(raw: str) -> tuple[int | None, str | None, str | None]:
+    """Returns (item_id, human_time, error). Stores human-readable time for now."""
+    text = (raw or "").strip()
+    if text.lower().startswith("запланировать "):
+        text = text.split(" ", 1)[1].strip()
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[0].isdigit():
+        return None, None, "Отправь: ID и время. Пример: 1 завтра 18:00"
+    item_id = int(parts[0])
+    when = parts[1].strip()
+    if not when:
+        return None, None, "После ID укажи время. Пример: 1 завтра 18:00"
+    return item_id, when, None
+
+
+async def _send_platform_stats(message: Message, platform: str):
+    from database.db import get_stats
+    from services.content_queue import list_prime_content, queue_stats
+    data = await get_stats()
+    items = list_prime_content(user_id=None, limit=100)
+    p = platform.lower()
+    platform_items = [
+        i for i in items
+        if p in str(i.get("platform") or "").lower() or p in str(i.get("content_type") or "").lower()
+    ]
+    qstats = queue_stats()
+    if p == "instagram":
+        title = "📲 <b>Статистика Instagram</b>"
+        kb = prime_instagram_hub_menu
+        extra = f"📷 IG-материалов в очереди: {len(platform_items)}"
+    else:
+        title = "📢 <b>Статистика Telegram</b>"
+        kb = prime_telegram_hub_menu
+        extra = f"📢 TG-материалов в очереди: {len(platform_items)}"
+    await message.answer(
+        f"{title}\n\n"
+        f"👥 Пользователей: {data.get('total_users', 0)}\n"
+        f"💎 PRO: {data.get('total_pro', 0)}\n"
+        f"⚡ Генераций всего: {data.get('total_generations', 0)}\n"
+        f"{extra}\n"
+        f"📌 Очередь: {_queue_status_line(qstats)}\n\n"
+        "✅ Статистика отвечает. Детальную аналитику по охватам подключим после подключения публикаций/API.",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
 
 
 PRIME_PANEL_TEXT = (
@@ -257,6 +355,7 @@ async def prime_panel_section(message: Message, state: FSMContext):
         return
 
     await state.clear()
+    await _ensure_admin_user(message)
     await message.answer(PRIME_SECTIONS[message.text], reply_markup=prime_system_hub_menu, parse_mode="HTML")
 
 
@@ -295,6 +394,8 @@ ADMIN_ACTION_TEXTS = {
     "📅 Публикация позже": "Очередь: запланировать материал.",
     "🗑 Удалить из очереди": "Очередь: удалить материал по ID.",
     "🕒 Посмотреть очередь": "Очередь: посмотреть материалы.",
+    "🔄 Обновить очередь": "Очередь: обновить и показать актуальные материалы.",
+    "✏️ Редактировать материал": "Очередь: редактировать материал по ID.",
     "📌 Очередь публикаций": "Очередь: список сохранённых материалов.",
     "🚫 Заблокировать": "Админ: заблокировать пользователя по user_id.",
     "📢 Telegram пост": "WF Telegram Post: текст для Telegram.",
@@ -339,7 +440,9 @@ ADMIN_ACTION_TEXTS = {
     "📈 Статистика лимитов": "Показывает использование лимитов по тарифам и пользователям.",
     "🎯 Статистика воронок": "Показывает funnel_id, переходы IG→TG, keyword, выдачи лид-магнитов.",
     "📲 Статистика Instagram": "Показывает Instagram-материалы, карусели, Reels и ошибки публикаций.",
+    "📊 Статистика Instagram": "Показывает Instagram-материалы, карусели, Reels и ошибки публикаций.",
     "📢 Статистика Telegram": "Показывает Telegram-посты, лид-магниты, подписчиков и активность.",
+    "📊 Статистика Telegram": "Показывает Telegram-посты, лид-магниты, подписчиков и активность.",
     "🚨 Ошибки n8n": "Показывает ошибки workflow, таймауты, неудачные публикации и повторы.",
     "🧪 Проверить n8n": "Проверка доступности n8n system webhook.",
     "🧪 Проверить Image Generator": "Проверка генерации картинок через OpenRouter/image workflow.",
@@ -354,29 +457,11 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
         return
 
     await state.clear()
+    await _ensure_admin_user(message)
 
     # ===== Реальные разделы очереди, рассылок, пользователей и диагностики без вылета в главное меню =====
     if message.text in {"📌 Очередь публикаций", "🕒 Посмотреть очередь"}:
-        from services.content_queue import list_prime_content, queue_stats
-        items = list_prime_content(user_id=None, limit=10)
-        stats = queue_stats()
-        if not items:
-            await message.answer(
-                "📌 <b>Контент-очередь пуста</b>\n\n"
-                "Сначала сгенерируй материал в «📣 Контент Центр», затем нажми «📅 В очередь контента».\n\n"
-                "Статусы: " + (", ".join([f"{k}: {v}" for k, v in stats.items()]) or "нет"),
-                reply_markup=prime_publish_hub_menu,
-                parse_mode="HTML",
-            )
-            return
-        lines = ["📌 <b>Контент-очередь</b>\n"]
-        for it in items:
-            lines.append(
-                f"ID: <code>{it.get('id')}</code> | {it.get('status')} | {it.get('platform')} | {it.get('content_type')}\n"
-                f"Тема: {it.get('topic')}\n"
-            )
-        lines.append("Действия: удалить ID, готово ID, редактировать ID новый текст, запланировать ID завтра 18:00")
-        await message.answer("\n".join(lines), reply_markup=prime_publish_hub_menu, parse_mode="HTML")
+        await _send_queue(message)
         return
 
     if message.text == "🗑 Удалить из очереди":
@@ -409,10 +494,7 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
         return
 
     if message.text == "🔄 Обновить очередь":
-        from services.content_queue import list_prime_content, queue_stats
-        items = list_prime_content(user_id=None, limit=10)
-        stats = queue_stats()
-        await message.answer("🔄 Очередь обновлена. Нажми «🕒 Посмотреть очередь» для просмотра.\n\nСтатусы: " + (", ".join([f"{k}: {v}" for k, v in stats.items()]) or "нет"), reply_markup=prime_publish_hub_menu)
+        await _send_queue(message, "🔄 Очередь обновлена")
         return
 
     if message.text in {"📣 Рассылка всем", "💎 Рассылка PRO", "🆓 Рассылка FREE", "🎯 Рассылка по сегменту"}:
@@ -911,9 +993,10 @@ async def publish_last_to_telegram_channel(message: Message, state: FSMContext):
                 chat_id=settings.CHANNEL_ID,
                 photo=_telegram_photo_input(image_url),
                 caption=_short_caption(content, 700),
+                reply_markup=post_action_buttons(),
             )
         else:
-            await message.bot.send_message(chat_id=settings.CHANNEL_ID, text=content)
+            await message.bot.send_message(chat_id=settings.CHANNEL_ID, text=content, reply_markup=post_action_buttons())
         await message.answer("✅ Опубликовано в Telegram-канал.", reply_markup=prime_after_generation_menu)
     except Exception as exc:
         await message.answer(
@@ -1268,7 +1351,7 @@ async def admin_edit_queue_apply(message: Message, state: FSMContext):
         await message.answer('⚠️ Материал с таким ID не найден.', reply_markup=prime_publish_hub_menu); return
     await message.answer(f'✏️ Материал <code>{parts[0]}</code> обновлён и отмечен ready.', reply_markup=prime_publish_hub_menu, parse_mode='HTML')
 
-@router.message(F.text.regexp(r'^(готово|удалить|редактировать)\s+\d+'))
+@router.message(F.text.regexp(r'^(готово|удалить|редактировать|запланировать)\s+\d+'))
 async def admin_queue_text_commands(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
@@ -1291,6 +1374,13 @@ async def admin_queue_text_commands(message: Message, state: FSMContext):
         item = update_prime_content(item_id, content=parts[1], status='ready')
         await message.answer((f'✏️ Материал <code>{item_id}</code> обновлён.' if item else '⚠️ Материал с таким ID не найден.'), reply_markup=prime_publish_hub_menu, parse_mode='HTML')
         return
+    if cmd.lower() == 'запланировать':
+        if len(parts) < 2:
+            await message.answer('📅 После ID укажи время. Пример: запланировать 1 завтра 18:00', reply_markup=prime_publish_hub_menu); return
+        from services.content_queue import schedule_prime_content
+        item = schedule_prime_content(item_id, parts[1])
+        await message.answer((f'📅 Материал <code>{item_id}</code> запланирован на: <b>{parts[1]}</b>' if item else '⚠️ Материал с таким ID не найден.'), reply_markup=prime_publish_hub_menu, parse_mode='HTML')
+        return
 
 @router.message(AdminPrimeN8NState.waiting_delete_queue_id)
 async def admin_delete_queue_apply(message: Message, state: FSMContext):
@@ -1308,14 +1398,16 @@ async def admin_delete_queue_apply(message: Message, state: FSMContext):
 async def admin_schedule_queue_apply(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await state.clear(); return
-    text=(message.text or '').strip()
-    parts=text.split(maxsplit=1)
-    if not parts or not parts[0].isdigit():
-        await message.answer('Отправь: ID и время. Пример: 3 завтра 18:00', reply_markup=prime_publish_hub_menu); return
+    item_id, when, error = _parse_queue_schedule_text(message.text or '')
+    if error:
+        await message.answer(error, reply_markup=prime_publish_hub_menu); return
     from services.content_queue import schedule_prime_content
-    item=schedule_prime_content(int(parts[0]), parts[1] if len(parts)>1 else 'время не указано')
+    item=schedule_prime_content(item_id, when)
     await state.clear()
-    await message.answer(('📅 Материал запланирован.' if item else '⚠️ Материал с таким ID не найден.'), reply_markup=prime_publish_hub_menu)
+    if item:
+        await message.answer(f'📅 Материал <code>{item_id}</code> запланирован на: <b>{when}</b>', reply_markup=prime_publish_hub_menu, parse_mode='HTML')
+    else:
+        await message.answer('⚠️ Материал с таким ID не найден.', reply_markup=prime_publish_hub_menu)
 
 @router.message(F.text == "⬅️ Назад в Контент Центр")
 async def back_to_content_center_from_prime(message: Message, state: FSMContext):

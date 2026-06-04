@@ -5,6 +5,7 @@ from aiogram.types import FSInputFile
 
 from config import settings
 from database.db import get_due_posts, mark_post_published
+from keyboards import post_action_buttons
 
 
 def normalize_post_text(text):
@@ -28,18 +29,21 @@ async def publish_post(bot, post_id, text, image_path):
         await bot.send_photo(
             chat_id=settings.CHANNEL_ID,
             photo=photo,
-            caption=text[:1024]
+            caption=text[:1024],
+            reply_markup=post_action_buttons()
         )
 
         if len(text) > 1024:
             await bot.send_message(
                 chat_id=settings.CHANNEL_ID,
-                text=text
+                text=text,
+                reply_markup=post_action_buttons()
             )
     else:
         await bot.send_message(
             chat_id=settings.CHANNEL_ID,
-            text=text
+            text=text,
+            reply_markup=post_action_buttons()
         )
 
     await mark_post_published(post_id)

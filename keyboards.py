@@ -1,4 +1,4 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 
 def kb(rows):
@@ -297,3 +297,18 @@ week_confirm_menu = kb([
 cabinet_menu = kb([
     ["⬅️ Главное меню"],
 ])
+
+
+# =========================
+# INLINE BUTTONS UNDER CHANNEL POSTS
+# =========================
+def post_action_buttons():
+    """PrimeOnix action buttons for every published Telegram channel post."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔥 Заказать услугу", url="https://t.me/feoktistov_k")],
+            [InlineKeyboardButton(text="🤖 AI Консультант", url="https://t.me/primeonixbot")],
+            [InlineKeyboardButton(text="📋 Все услуги", url="https://vk.com/primeonixai")],
+            [InlineKeyboardButton(text="💬 Связаться", url="https://vk.com/feoktistov_k")],
+        ]
+    )

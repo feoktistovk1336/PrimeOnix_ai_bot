@@ -6,6 +6,7 @@ This module is kept safe for compatibility with older imports.
 
 from config import settings
 from services.ai import ask_ai
+from keyboards import post_action_buttons
 
 
 async def auto_post(bot):
@@ -31,7 +32,8 @@ async def auto_post(bot):
 
         await bot.send_message(
             chat_id=settings.CHANNEL_ID,
-            text=text[:4000]
+            text=text[:4000],
+            reply_markup=post_action_buttons()
         )
 
         print("AUTOPOST SUCCESS")

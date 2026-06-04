@@ -23,7 +23,7 @@ from database.db import (
     publish_scheduled_post_now,
     mark_post_published
 )
-from keyboards import admin_menu, limits_menu, autopost_menu, week_confirm_menu
+from keyboards import admin_menu, limits_menu, autopost_menu, week_confirm_menu, post_action_buttons
 from services.ai import ask_ai
 from services.image_service import generate_quality_image
 from services.week_service import generate_week_content, parse_week_posts, parse_times
@@ -291,18 +291,21 @@ async def publish_post_to_channel(bot, text, image_path=None):
         await bot.send_photo(
             chat_id=settings.CHANNEL_ID,
             photo=FSInputFile(image_path),
-            caption=text[:1024]
+            caption=text[:1024],
+            reply_markup=post_action_buttons()
         )
 
         if len(text) > 1024:
             await bot.send_message(
                 chat_id=settings.CHANNEL_ID,
-                text=text
+                text=text,
+                reply_markup=post_action_buttons()
             )
     else:
         await bot.send_message(
             chat_id=settings.CHANNEL_ID,
-            text=text
+            text=text,
+            reply_markup=post_action_buttons()
         )
 
 
@@ -832,7 +835,8 @@ async def view_post(message: Message, state: FSMContext):
     if image_path and os.path.exists(image_path):
         await message.answer_photo(
             photo=FSInputFile(image_path),
-            caption=text[:1024]
+            caption=text[:1024],
+            reply_markup=post_action_buttons()
         )
 
         if len(text) > 1024:
