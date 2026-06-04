@@ -23,6 +23,8 @@ from keyboards import (
     prime_stats_menu,
     prime_checks_menu,
     prime_after_generation_menu,
+    prime_rubric_day_menu,
+    prime_rubric_after_generation_menu,
     post_action_buttons,
 )
 
@@ -94,6 +96,52 @@ def _extract_quality_block(data_payload: dict) -> str:
 from handlers.prime_viral import LAST_PRIME_RESULT
 
 
+RUBRIC_TITLES = [
+    "⚡ Кейс дня",
+    "🤖 Нейросеть недели",
+    "📈 Разбор бизнеса подписчика",
+    "🚀 Автоматизация дня",
+    "💰 Сколько стоит внедрение",
+]
+
+RUBRIC_ALIASES = {
+    "✨ Сделать все рубрики сразу": "all",
+    **{title: title for title in RUBRIC_TITLES},
+}
+
+LAST_RUBRIC_PACK = {}
+
+
+def _rubric_prompt(rubric: str, topic: str) -> str:
+    base = (topic or "PrimeOnix AI: Telegram-боты, AI-контент, автоматизация, нейросети для бизнеса").strip()
+    instructions = {
+        "⚡ Кейс дня": "Сделай пост-рубрику 'Кейс дня': ситуация клиента, проблема, что внедрили, результат, вывод. Без выдуманных громких цифр, если их нет. Тон экспертный, продающий мягко.",
+        "🤖 Нейросеть недели": "Сделай пост-рубрику 'Нейросеть недели': что за инструмент, для чего нужен бизнесу, 3 сценария применения, как внедрить, кому подойдет.",
+        "📈 Разбор бизнеса подписчика": "Сделай пост-рубрику 'Разбор бизнеса подписчика': пример бизнеса, где теряются заявки/время, что автоматизировать, какую связку сделать, первые шаги.",
+        "🚀 Автоматизация дня": "Сделай пост-рубрику 'Автоматизация дня': одна конкретная автоматизация, зачем нужна, схема работы, что подключить, результат для владельца.",
+        "💰 Сколько стоит внедрение": "Сделай пост-рубрику 'Сколько стоит внедрение': объясни от чего зависит цена, минимальная стоимость, что увеличивает бюджет, примеры пакетов.",
+    }
+    return (
+        f"{instructions.get(rubric, 'Сделай экспертный Telegram-пост для рубрики.')}\n\n"
+        f"Тема/ниша/контекст: {base}\n\n"
+        "Формат: заголовок, короткий сильный хук, основной текст по пунктам, вывод. "
+        "Не добавляй кнопки, ссылки и подпись PrimeOnix AI — кнопки бот добавит сам."
+    )
+
+
+def _format_rubric_pack(posts: list[dict]) -> str:
+    import html
+    lines = ["🗓 <b>Рубрика дня готова</b>", ""]
+    for idx, post in enumerate(posts, start=1):
+        lines.append(f"<b>{idx}. {html.escape(str(post.get('rubric') or 'Рубрика'))}</b>")
+        content = _clean_visible_text(post.get('content') or '')
+        preview = content[:700] + ("…" if len(content) > 700 else "")
+        lines.append(html.escape(preview))
+        lines.append("")
+    lines.append("Дальше можно опубликовать всё сразу, отредактировать выбранный пост или поставить пакет в очередь.")
+    return "\n".join(lines).strip()
+
+
 class AdminPrimeN8NState(StatesGroup):
     waiting_task_prompt = State()
     waiting_edit_prompt = State()
@@ -108,6 +156,10 @@ class AdminPrimeN8NState(StatesGroup):
     waiting_schedule_queue = State()
     waiting_edit_queue_item = State()
     waiting_mark_ready_queue_id = State()
+    waiting_rubric_topic = State()
+    waiting_rubric_edit_choice = State()
+    waiting_rubric_edit_text = State()
+    waiting_rubric_schedule_times = State()
 
 
 async def _ensure_admin_user(message: Message):
@@ -357,6 +409,92 @@ async def prime_panel_section(message: Message, state: FSMContext):
     await state.clear()
     await _ensure_admin_user(message)
     await message.answer(PRIME_SECTIONS[message.text], reply_markup=prime_system_hub_menu, parse_mode="HTML")
+
+
+
+@router.message(F.text.in_(RUBRIC_ALIASES.keys()))
+async def start_rubric_day(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Нет доступа")
+        return
+    await state.clear()
+    choice = RUBRIC_ALIASES.get(message.text)
+    selected = RUBRIC_TITLES if choice == "all" else [choice]
+    await state.update_data(rubric_selected=selected)
+    await state.set_state(AdminPrimeN8NState.waiting_rubric_topic)
+    await message.answer(
+        "🗓 Рубрика дня\n\n"
+        "Напиши тему, нишу или продукт, под который сделать рубрики.\n\n"
+        "Можно написать коротко: «PrimeOnix AI, услуги по ботам и контенту».\n"
+        "Если оставить общую тему — сделаю под твои услуги PrimeOnix.",
+        reply_markup=prime_rubric_day_menu,
+    )
+
+
+@router.message(AdminPrimeN8NState.waiting_rubric_topic)
+async def generate_rubric_day(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        return
+    text = (message.text or "").strip()
+    if text in HUBS:
+        await state.clear()
+        hub_text, hub_keyboard = HUBS[text]
+        await message.answer(hub_text, reply_markup=hub_keyboard, parse_mode="HTML")
+        return
+    if text in {"⬅️ Назад в админку"}:
+        await state.clear()
+        await message.answer(PRIME_PANEL_TEXT, reply_markup=prime_panel_menu, parse_mode="HTML")
+        return
+    if text in RUBRIC_ALIASES:
+        choice = RUBRIC_ALIASES.get(text)
+        selected = RUBRIC_TITLES if choice == "all" else [choice]
+        await state.update_data(rubric_selected=selected)
+        await message.answer("Ок, режим рубрики изменён. Теперь напиши тему/нишу для генерации.", reply_markup=prime_rubric_day_menu)
+        return
+
+    data = await state.get_data()
+    selected = data.get("rubric_selected") or RUBRIC_TITLES
+    topic = text or "PrimeOnix AI: Telegram-боты, AI-контент, автоматизация, нейросети для бизнеса"
+
+    from services.n8n_client import call_n8n
+    await message.answer(f"🚀 Создаю рубрики: {len(selected)} шт.")
+    posts = []
+    for rubric in selected:
+        result = await call_n8n({
+            "action": "rubric_day_post",
+            "workflow": "telegram",
+            "platform": "telegram",
+            "content_type": "rubric_day",
+            "rubric": rubric,
+            "source": "telegram_bot_admin",
+            "user_id": message.from_user.id,
+            "topic": topic,
+            "prompt": _rubric_prompt(rubric, topic),
+            "message": _rubric_prompt(rubric, topic),
+            "expected_response": {"text": "Ready Telegram post for selected rubric"},
+        }, timeout=120)
+        if result.get("ok"):
+            content = _clean_visible_text(result.get("text") or result.get("raw") or "")
+        else:
+            content = (
+                f"{rubric}\n\n"
+                f"Не удалось получить ответ от n8n. Ошибка: {result.get('error')}\n"
+                "Можно перегенерировать позже или отредактировать этот пост вручную."
+            )
+        posts.append({"rubric": rubric, "content": content, "topic": topic})
+
+    LAST_RUBRIC_PACK[message.from_user.id] = posts
+    LAST_PRIME_RESULT[message.from_user.id] = {
+        "tool": "🗓 Рубрика дня",
+        "topic": topic,
+        "content": "\n\n---\n\n".join([p["content"] for p in posts]),
+        "platform": "telegram",
+        "content_type": "rubric_pack",
+        "source": "rubric_day",
+    }
+    await state.clear()
+    await message.answer(_format_rubric_pack(posts), reply_markup=prime_rubric_after_generation_menu, parse_mode="HTML")
 
 
 N8N_ADMIN_TASKS = {
@@ -940,6 +1078,173 @@ async def admin_user_history_apply(message: Message, state: FSMContext):
     for feature, created_at in rows:
         lines.append(f"• {created_at}: {feature}")
     await message.answer("\n".join(lines), reply_markup=prime_users_menu, parse_mode="HTML")
+
+
+# =========================
+# RUBRIC DAY ACTIONS
+# =========================
+
+async def _require_rubric_pack(message: Message):
+    posts = LAST_RUBRIC_PACK.get(message.from_user.id)
+    if not posts:
+        await message.answer("⚠️ Сначала создай рубрики в разделе «🗓 Рубрика дня».", reply_markup=prime_rubric_day_menu)
+        return None
+    return posts
+
+
+@router.message(F.text == "📤 Опубликовать все сразу")
+async def publish_all_rubrics(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    posts = await _require_rubric_pack(message)
+    if not posts:
+        return
+    if not settings.CHANNEL_ID:
+        await message.answer("⚠️ CHANNEL_ID не указан. Добавь CHANNEL_ID канала в Railway/.env.", reply_markup=prime_rubric_after_generation_menu)
+        return
+    sent = 0
+    errors = 0
+    for post in posts:
+        try:
+            await message.bot.send_message(
+                chat_id=settings.CHANNEL_ID,
+                text=post.get("content") or "",
+                reply_markup=post_action_buttons(),
+            )
+            sent += 1
+        except Exception:
+            errors += 1
+    await message.answer(f"✅ Опубликовано: {sent}\nОшибок: {errors}", reply_markup=prime_rubric_after_generation_menu)
+
+
+@router.message(F.text == "✏️ Отредактировать пост")
+async def ask_rubric_edit_choice(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    posts = await _require_rubric_pack(message)
+    if not posts:
+        return
+    lines = ["✏️ Какой пост редактируем? Отправь номер:", ""]
+    for idx, post in enumerate(posts, start=1):
+        lines.append(f"{idx}. {post.get('rubric')}")
+    await state.set_state(AdminPrimeN8NState.waiting_rubric_edit_choice)
+    await message.answer("\n".join(lines), reply_markup=prime_rubric_after_generation_menu)
+
+
+@router.message(AdminPrimeN8NState.waiting_rubric_edit_choice)
+async def rubric_edit_choice(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    text = (message.text or "").strip()
+    if text in {"⬅️ Назад в админку"}:
+        await state.clear(); await message.answer(PRIME_PANEL_TEXT, reply_markup=prime_panel_menu, parse_mode="HTML"); return
+    posts = await _require_rubric_pack(message)
+    if not posts:
+        await state.clear(); return
+    if not text.isdigit() or not (1 <= int(text) <= len(posts)):
+        await message.answer("Отправь номер поста из списка: 1, 2, 3...", reply_markup=prime_rubric_after_generation_menu)
+        return
+    idx = int(text) - 1
+    await state.update_data(rubric_edit_index=idx)
+    await state.set_state(AdminPrimeN8NState.waiting_rubric_edit_text)
+    await message.answer(
+        f"✏️ Редактируем: {posts[idx].get('rubric')}\n\n"
+        "Отправь новый текст поста полностью.",
+        reply_markup=prime_rubric_after_generation_menu,
+    )
+
+
+@router.message(AdminPrimeN8NState.waiting_rubric_edit_text)
+async def rubric_edit_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    posts = await _require_rubric_pack(message)
+    if not posts:
+        await state.clear(); return
+    data = await state.get_data()
+    idx = int(data.get("rubric_edit_index", 0))
+    new_text = _clean_visible_text(message.text or "")
+    if not new_text:
+        await message.answer("Отправь новый текст поста.", reply_markup=prime_rubric_after_generation_menu)
+        return
+    posts[idx]["content"] = new_text
+    LAST_RUBRIC_PACK[message.from_user.id] = posts
+    LAST_PRIME_RESULT[message.from_user.id] = {
+        "tool": "🗓 Рубрика дня",
+        "topic": posts[idx].get("topic"),
+        "content": "\n\n---\n\n".join([p["content"] for p in posts]),
+        "platform": "telegram",
+        "content_type": "rubric_pack",
+        "source": "rubric_day",
+    }
+    await state.clear()
+    await message.answer("✅ Пост обновлён. Вот актуальный пакет:\n\n" + _format_rubric_pack(posts), reply_markup=prime_rubric_after_generation_menu, parse_mode="HTML")
+
+
+@router.message(F.text == "📅 Поставить в очередь")
+async def ask_rubric_schedule(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    posts = await _require_rubric_pack(message)
+    if not posts:
+        return
+    await state.set_state(AdminPrimeN8NState.waiting_rubric_schedule_times)
+    await message.answer(
+        "📅 Отправь даты/время для рубрик по строкам.\n\n"
+        "Формат:\n"
+        "1 завтра 10:00\n"
+        "2 завтра 15:00\n"
+        "3 07.06 12:00\n\n"
+        "Можно отправить «без времени» — я сохраню все рубрики в очередь как draft.",
+        reply_markup=prime_rubric_after_generation_menu,
+    )
+
+
+@router.message(AdminPrimeN8NState.waiting_rubric_schedule_times)
+async def rubric_schedule_apply(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear(); return
+    posts = await _require_rubric_pack(message)
+    if not posts:
+        await state.clear(); return
+    raw = (message.text or "").strip()
+    schedule_map = {}
+    if raw.lower() not in {"без времени", "draft", "черновик"}:
+        for line in raw.splitlines():
+            parts = line.strip().split(maxsplit=1)
+            if len(parts) == 2 and parts[0].isdigit():
+                schedule_map[int(parts[0])] = parts[1].strip()
+    from services.content_queue import add_prime_content, STATUS_DRAFT, STATUS_SCHEDULED
+    added = []
+    for idx, post in enumerate(posts, start=1):
+        when = schedule_map.get(idx)
+        item = add_prime_content(
+            user_id=message.from_user.id,
+            tool="🗓 Рубрика дня",
+            topic=post.get("topic") or post.get("rubric") or "Рубрика дня",
+            content=post.get("content") or "",
+            status=STATUS_SCHEDULED if when else STATUS_DRAFT,
+            scheduled_at=when,
+            platform="telegram",
+            content_type="rubric_day",
+            meta={"rubric": post.get("rubric")},
+        )
+        added.append((item.get("id"), post.get("rubric"), when or "без времени"))
+    await state.clear()
+    lines = ["✅ Рубрики добавлены в очередь:", ""]
+    for item_id, rubric, when in added:
+        lines.append(f"ID {item_id} — {rubric} — {when}")
+    await message.answer("\n".join(lines), reply_markup=prime_rubric_after_generation_menu)
+
+
+@router.message(F.text == "🧹 Сбросить очередь")
+async def reset_rubric_pack(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+    LAST_RUBRIC_PACK.pop(message.from_user.id, None)
+    await state.clear()
+    await message.answer("🧹 Пакет рубрик сброшен. Можно создать новый.", reply_markup=prime_rubric_day_menu)
+
 
 # =========================
 # AFTER GENERATION ACTIONS — publish/transform/queue/edit/regenerate
