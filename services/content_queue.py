@@ -185,3 +185,49 @@ def queue_stats(user_id: int | None = None) -> dict[str, int]:
         status = str(item.get("status") or STATUS_DRAFT)
         stats[status] = stats.get(status, 0) + 1
     return stats
+
+
+def find_prime_content_by_meta(key: str, value: Any, user_id: int | None = None) -> dict[str, Any] | None:
+    """Find first queue item where meta[key] == value."""
+    for item in reversed(_load()):
+        if user_id is not None and int(item.get("user_id", 0) or 0) != int(user_id):
+            continue
+        meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+        if str(meta.get(key) or "") == str(value):
+            return item
+    return None
+
+
+def append_media_to_prime_content(item_id: int, media: dict[str, Any], caption: str | None = None) -> dict[str, Any] | None:
+    """Append Telegram media file_id to an existing queue item album without creating a second post."""
+    items = _load()
+    updated = None
+    for item in items:
+        if int(item.get("id", 0) or 0) != int(item_id):
+            continue
+        meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+        album_items = meta.get("album_items")
+        if not isinstance(album_items, list):
+            album_items = []
+            # Preserve the first media if it was stored before album mode.
+            if meta.get("telegram_file_id"):
+                album_items.append({
+                    "media_type": meta.get("media_type") or "photo",
+                    "telegram_file_id": meta.get("telegram_file_id"),
+                    "file_unique_id": meta.get("file_unique_id"),
+                })
+        album_items.append(media)
+        meta["album_items"] = album_items
+        meta["album_count"] = len(album_items)
+        meta["media_type"] = "album" if len(album_items) > 1 else meta.get("media_type", media.get("media_type"))
+        item["meta"] = meta
+        item["content_type"] = "custom_album" if len(album_items) > 1 else item.get("content_type")
+        if caption:
+            item["content"] = caption
+            item["caption"] = caption
+        item["updated_at"] = _now()
+        updated = item
+        break
+    if updated:
+        _save(items)
+    return updated
