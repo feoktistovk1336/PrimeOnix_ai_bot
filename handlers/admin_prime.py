@@ -180,10 +180,15 @@ def _queue_status_line(stats: dict) -> str:
 
 def _queue_item_line(it: dict) -> str:
     scheduled = it.get("scheduled_at") or "—"
+    meta = it.get("meta") if isinstance(it.get("meta"), dict) else {}
+    media_type = meta.get("media_type") or ("media" if it.get("media_url") else "text")
+    content = str(it.get("content") or it.get("caption") or "")
+    preview = (content[:90] + "…") if len(content) > 90 else content
     return (
-        f"ID: <code>{it.get('id')}</code> | {it.get('status')} | {it.get('platform')} | {it.get('content_type')}\n"
+        f"ID: <code>{it.get('id')}</code> | {it.get('status')} | {it.get('platform')} | {it.get('content_type')} | {media_type}\n"
         f"Тема: {it.get('topic') or '—'}\n"
         f"Время: {scheduled}\n"
+        f"Текст: {preview or '—'}\n"
     )
 
 
@@ -205,11 +210,14 @@ async def _send_queue(message: Message, title: str = "📌 Контент-оче
     for it in items:
         lines.append(_queue_item_line(it))
     lines.append(
-        "Команды:\n"
-        "• готово ID\n"
-        "• удалить ID\n"
+        "Действия:\n"
+        "• ✏️ Редактировать очередь — изменить дату/время выхода\n"
+        "• 📝 Редактировать пост — изменить текст/подпись\n"
+        "• 🗑 Удалить пост — удалить материал\n\n"
+        "Команды тоже работают:\n"
+        "• запланировать ID завтра 18:00\n"
         "• редактировать ID новый текст\n"
-        "• запланировать ID завтра 18:00"
+        "• удалить ID"
     )
     await message.answer("\n".join(lines), reply_markup=prime_publish_hub_menu, parse_mode="HTML")
 
@@ -559,11 +567,14 @@ ADMIN_ACTION_TEXTS = {
     "✅ Отметить готово": "Очередь: отметить материал готовым.",
     "📤 Подготовить к публикации": "Очередь: подготовить материал к публикации.",
     "📅 Публикация позже": "Очередь: запланировать материал.",
-    "➕ Создать свой пост": "Очередь: создать свой пост вручную и сохранить для планирования.",
+    "✏️ Редактировать очередь": "Очередь: изменить дату/время выхода материала по ID.",
+    "➕ Создать свой пост": "Очередь: создать свой материал вручную — текст, фото или видео.",
     "🗑 Удалить из очереди": "Очередь: удалить материал по ID.",
+    "🗑 Удалить пост": "Очередь: удалить материал по ID.",
     "🕒 Посмотреть очередь": "Очередь: посмотреть материалы.",
     "🔄 Обновить очередь": "Очередь: обновить и показать актуальные материалы.",
     "✏️ Редактировать материал": "Очередь: редактировать материал по ID.",
+    "📝 Редактировать пост": "Очередь: редактировать текст/подпись материала по ID.",
     "📌 Очередь публикаций": "Очередь: список сохранённых материалов.",
     "🚫 Заблокировать": "Админ: заблокировать пользователя по user_id.",
     "📢 Telegram пост": "WF Telegram Post: текст для Telegram.",
@@ -635,26 +646,29 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
     if message.text == "➕ Создать свой пост":
         await state.set_state(AdminPrimeN8NState.waiting_custom_queue_post)
         await message.answer(
-            "➕ <b>Создать свой пост в очередь</b>\n\n"
-            "Отправь готовый текст поста одним сообщением.\n\n"
-            "После сохранения я дам ID, и его можно будет запланировать через «📅 Публикация позже».\n\n"
-            "Пример планирования после сохранения:\n"
+            "➕ <b>Создать свой материал в очередь</b>\n\n"
+            "Можно отправить:\n"
+            "— обычный текст поста;\n"
+            "— фото с подписью;\n"
+            "— видео с подписью;\n"
+            "— документ/файл с подписью.\n\n"
+            "Я сохраню материал в очередь и дам ID. Потом через «✏️ Редактировать очередь» можно поставить дату и время выхода.\n\n"
+            "Примеры даты:\n"
             "<code>1 завтра 18:00</code>\n"
-            "или\n"
             "<code>1 08.06.2026 18:00</code>",
             reply_markup=prime_publish_hub_menu,
             parse_mode="HTML",
         )
         return
 
-    if message.text == "🗑 Удалить из очереди":
+    if message.text in {"🗑 Удалить из очереди", "🗑 Удалить пост"}:
         await state.set_state(AdminPrimeN8NState.waiting_delete_queue_id)
         await message.answer("🗑 Отправь ID материала из очереди для удаления.", reply_markup=prime_publish_hub_menu)
         return
 
-    if message.text == "📅 Публикация позже":
+    if message.text in {"📅 Публикация позже", "✏️ Редактировать очередь"}:
         await state.set_state(AdminPrimeN8NState.waiting_schedule_queue)
-        await message.answer("📅 Отправь: ID и время.\n\nПример: 3 завтра 18:00", reply_markup=prime_publish_hub_menu)
+        await message.answer("✏️ <b>Редактировать очередь</b>\n\nОтправь ID материала и новую дату/время выхода.\n\nПример:\n<code>3 завтра 18:00</code>\nили\n<code>3 08.06.2026 18:00</code>", reply_markup=prime_publish_hub_menu, parse_mode="HTML")
         return
 
     if message.text == "📤 Подготовить к публикации":
@@ -666,13 +680,15 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
         await message.answer("✅ Отправь ID материала, который нужно отметить готовым.\n\nПример: 3", reply_markup=prime_publish_hub_menu)
         return
 
-    if message.text == "✏️ Редактировать материал":
+    if message.text in {"✏️ Редактировать материал", "📝 Редактировать пост"}:
         await state.set_state(AdminPrimeN8NState.waiting_edit_queue_item)
         await message.answer(
-            "✏️ Отправь ID материала и новый текст.\n\n"
-            "Пример: 3 Сделай текст короче и сильнее.\n\n"
-            "Также можно написать: редактировать 3 новый текст",
+            "📝 <b>Редактировать пост из очереди</b>\n\n"
+            "Отправь ID материала и новый текст/подпись.\n\n"
+            "Пример:\n<code>3 Новый текст поста</code>\n\n"
+            "Также можно написать: <code>редактировать 3 новый текст</code>",
             reply_markup=prime_publish_hub_menu,
+            parse_mode="HTML",
         )
         return
 
@@ -1678,30 +1694,68 @@ async def admin_custom_queue_post_apply(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         await state.clear()
         return
-    text = (message.text or '').strip()
-    if not text or text in {"⬅️ Назад в админку", "📦 Очередь"}:
-        await message.answer("Отправь текст поста одним сообщением.", reply_markup=prime_publish_hub_menu)
+
+    text = (message.text or message.caption or '').strip()
+    if (message.text or '').strip() in {"⬅️ Назад в админку", "📦 Очередь"}:
+        await state.clear()
+        await message.answer("📦 Очередь", reply_markup=prime_publish_hub_menu)
         return
+
+    media_type = "text"
+    media_file_id = None
+    file_unique_id = None
+    if message.photo:
+        media_type = "photo"
+        media_file_id = message.photo[-1].file_id
+        file_unique_id = message.photo[-1].file_unique_id
+    elif message.video:
+        media_type = "video"
+        media_file_id = message.video.file_id
+        file_unique_id = message.video.file_unique_id
+    elif message.document:
+        media_type = "document"
+        media_file_id = message.document.file_id
+        file_unique_id = message.document.file_unique_id
+
+    if not text and not media_file_id:
+        await message.answer(
+            "Отправь материал одним сообщением: текст, фото с подписью, видео с подписью или файл с подписью.",
+            reply_markup=prime_publish_hub_menu,
+        )
+        return
+
     from services.content_queue import add_prime_content, STATUS_READY
+    content_type = "custom_post" if media_type == "text" else f"custom_{media_type}"
+    topic_source = text or f"Свой материал ({media_type})"
     item = add_prime_content(
         user_id=message.from_user.id,
-        tool="custom_post",
-        topic=(text.splitlines()[0][:80] if text else "Свой пост"),
+        tool="custom_material",
+        topic=(topic_source.splitlines()[0][:80] if topic_source else "Свой материал"),
         content=text,
+        caption=text,
         status=STATUS_READY,
         platform="telegram",
-        content_type="custom_post",
-        meta={"source": "admin_custom_queue_post"},
+        content_type=content_type,
+        media_url=media_file_id,
+        meta={
+            "source": "admin_custom_queue_material",
+            "media_type": media_type,
+            "telegram_file_id": media_file_id,
+            "file_unique_id": file_unique_id,
+        },
     )
     await state.clear()
     await message.answer(
-        f"✅ <b>Свой пост добавлен в очередь</b>\n\n"
+        f"✅ <b>Материал добавлен в очередь</b>\n\n"
         f"ID: <code>{item.get('id')}</code>\n"
+        f"Тип: <code>{content_type}</code>\n"
+        f"Медиа: <code>{media_type}</code>\n"
         f"Статус: <code>{item.get('status')}</code>\n\n"
-        f"Чтобы запланировать публикацию, нажми «📅 Публикация позже» и отправь:\n"
-        f"<code>{item.get('id')} завтра 18:00</code>\n"
-        f"или\n"
-        f"<code>{item.get('id')} 08.06.2026 18:00</code>",
+        f"Дальше можно:\n"
+        f"• ✏️ Редактировать очередь — поставить дату выхода;\n"
+        f"• 📝 Редактировать пост — изменить текст/подпись;\n"
+        f"• 🗑 Удалить пост — удалить из очереди.\n\n"
+        f"Пример даты:\n<code>{item.get('id')} завтра 18:00</code>",
         reply_markup=prime_publish_hub_menu,
         parse_mode="HTML",
     )
