@@ -29,6 +29,7 @@ from keyboards import (
     prime_limits_menu,
     prime_publish_hub_menu,
     prime_stats_menu,
+    ai_chat_menu,
 )
 
 
@@ -95,6 +96,14 @@ class GlobalNavigationMiddleware(BaseMiddleware):
         current_state = await state.get_state()
         text = event.text.strip()
 
+        # В AI-чате кнопки режимов похожи на админские кнопки (например «🎯 Воронки»),
+        # поэтому middleware не должен перехватывать их и выбрасывать пользователя из AI-чата.
+        if current_state and str(current_state).endswith(":waiting_question") and text in {
+            "💬 Общий помощник", "📈 SMM консультант", "📱 Telegram", "📸 Instagram",
+            "🎯 Воронки", "🤖 Нейросети/n8n", "💼 Бизнес", "📊 Лимит AI Чата",
+        }:
+            return await handler(event, data)
+
         if current_state is None or text not in ALL_NAV_BUTTONS:
             return await handler(event, data)
 
@@ -110,6 +119,13 @@ class GlobalNavigationMiddleware(BaseMiddleware):
 
         if text == "⬅️ Главное меню":
             await message.answer("Главное меню 👇", reply_markup=home_menu(uid))
+            return True
+
+        if text in {"💬 Общий помощник", "📈 SMM консультант", "📱 Telegram", "📸 Instagram", "🎯 Воронки", "🤖 Нейросети/n8n", "💼 Бизнес", "📊 Лимит AI Чата"}:
+            # Если пользователь нажал режим AI-чата вне активного AI-чата — открываем AI Chat, а не админ-раздел.
+            from handlers.ai_chat import AIChatState
+            await state.set_state(AIChatState.waiting_question)
+            await message.answer("🤖 AI Чат открыт. Выбери режим или задай вопрос 👇", reply_markup=ai_chat_menu)
             return True
 
         if text == "🧠 Обучить стилю":
@@ -257,8 +273,9 @@ class GlobalNavigationMiddleware(BaseMiddleware):
                 f"{title}\n\n"
                 f"👥 Пользователей: {data.get('total_users', 0)}\n"
                 f"💎 PRO: {data.get('total_pro', 0)}\n"
-                f"⚡ Генераций: {data.get('total_generations', 0)}\n\n"
-                "Детальную статистику по платформам подключим к n8n/БД после теста публикаций.",
+                f"⚡ Генераций: {data.get('total_generations', 0)}\n"
+                "📦 Очередь и подготовленные материалы смотри в разделе «📦 Очередь».\n"
+                "Статистика отвечает сразу и остаётся в этом разделе.",
                 reply_markup=prime_stats_menu,
             )
             return True
