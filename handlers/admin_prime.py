@@ -1,3 +1,6 @@
+import asyncio
+from datetime import datetime, timedelta
+
 from aiogram import Router, F
 from aiogram.types import Message, BufferedInputFile, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
@@ -110,6 +113,8 @@ RUBRIC_ALIASES = {
 }
 
 LAST_RUBRIC_PACK = {}
+_PENDING_ALBUM_TASKS = {}
+
 
 
 def _rubric_prompt(rubric: str, topic: str) -> str:
@@ -126,8 +131,30 @@ def _rubric_prompt(rubric: str, topic: str) -> str:
         f"Тема/ниша/контекст: {base}\n\n"
         "Формат Telegram 10/10: короткий заголовок, сильный хук, блоки с эмодзи-маркерами, пустые строки между смысловыми частями, конкретный пример, спокойный вывод. "
         "Не делай слитную простыню. Не добавляй кнопки, ссылки и подпись PrimeOnix AI — кнопки бот добавит сам. "
-        "Длина: 900–1400 символов, чтобы пост не обрывался и нормально читался в канале."
+        "Длина: 700–1100 символов. Пост обязан быть завершённым: не заканчивай середине слова или мысли, в конце добавь короткий блок ✅ Вывод."
     )
+
+
+
+
+def _finalize_rubric_content(rubric: str, content: str) -> str:
+    """Make rubric posts complete and safe for Telegram preview/publish."""
+    text = _clean_visible_text(content)
+    text = text.replace("Дальше:", "")
+    max_len = 1350
+    if len(text) > max_len:
+        cut = text[:max_len]
+        last = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "), cut.rfind("\n\n"))
+        if last > 650:
+            cut = cut[:last + 1]
+        text = cut.rstrip(" .,!?:;—-")
+        if "✅ Вывод" not in text and "Вывод" not in text[-160:]:
+            text += "\n\n✅ Вывод: один небольшой системный шаг сегодня часто даёт больше результата, чем хаотичная генерация контента без структуры."
+    tail = text.strip()[-80:].lower() if text.strip() else ""
+    if text.endswith("...") or text.endswith("…") or tail.endswith("физический ми") or len(text.split()) < 80:
+        text = text.rstrip(".… ")
+        text += "\n\n✅ Вывод: используйте инструмент не как игрушку, а как часть понятного процесса — задача, данные, результат, проверка."
+    return text.strip()
 
 
 def _format_rubric_pack(posts: list[dict]) -> str:
@@ -135,9 +162,9 @@ def _format_rubric_pack(posts: list[dict]) -> str:
     lines = ["🗓 <b>Рубрика дня готова</b>", ""]
     for idx, post in enumerate(posts, start=1):
         lines.append(f"<b>{idx}. {html.escape(str(post.get('rubric') or 'Рубрика'))}</b>")
-        content = _clean_visible_text(post.get('content') or '')
-        preview = content[:700] + ("…" if len(content) > 700 else "")
-        lines.append(html.escape(preview))
+        content = _finalize_rubric_content(str(post.get('rubric') or ''), post.get('content') or '')
+        post['content'] = content
+        lines.append(html.escape(content))
         lines.append("")
     lines.append("Дальше: 📤 опубликовать всё сразу, ✏️ отредактировать выбранный пост, 📅 поставить пакет в очередь или 🧹 сбросить пакет.")
     return "\n".join(lines).strip()
@@ -226,8 +253,62 @@ async def _send_queue(message: Message, title: str = "📌 Контент-оче
     await message.answer("\n".join(lines), reply_markup=prime_publish_hub_menu, parse_mode="HTML")
 
 
+def _normalize_schedule_time(raw_when: str) -> str | None:
+    """Normalize Russian date input to YYYY-MM-DD HH:MM for queue worker."""
+    text = (raw_when or "").strip().lower()
+    text = text.replace(",", " ").replace("  ", " ")
+    now = datetime.now()
+
+    # сегодня 18:00 / завтра 18:00
+    parts = text.split()
+    if len(parts) >= 2 and parts[0] in {"сегодня", "завтра"}:
+        day = now.date() + (timedelta(days=1) if parts[0] == "завтра" else timedelta(days=0))
+        time_part = parts[1]
+        try:
+            hh, mm = [int(x) for x in time_part.split(":", 1)]
+            return datetime(day.year, day.month, day.day, hh, mm).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return None
+
+    # 08.06.2026 18:00 / 08.06 18:00
+    if len(parts) >= 2 and "." in parts[0] and ":" in parts[1]:
+        date_part, time_part = parts[0], parts[1]
+        try:
+            date_bits = [int(x) for x in date_part.split(".")]
+            if len(date_bits) == 2:
+                dd, mon = date_bits
+                year = now.year
+            elif len(date_bits) == 3:
+                dd, mon, year = date_bits
+            else:
+                return None
+            hh, mm = [int(x) for x in time_part.split(":", 1)]
+            return datetime(year, mon, dd, hh, mm).strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return None
+
+    # 2026-06-08 18:00
+    if len(parts) >= 2 and "-" in parts[0] and ":" in parts[1]:
+        try:
+            return datetime.strptime(parts[0] + " " + parts[1], "%Y-%m-%d %H:%M").strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return None
+
+    # только время: 18:00 -> сегодня/завтра, если уже прошло
+    if len(parts) == 1 and ":" in parts[0]:
+        try:
+            hh, mm = [int(x) for x in parts[0].split(":", 1)]
+            dt = datetime(now.year, now.month, now.day, hh, mm)
+            if dt <= now:
+                dt += timedelta(days=1)
+            return dt.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return None
+
+    return None
+
+
 def _parse_queue_schedule_text(raw: str) -> tuple[int | None, str | None, str | None]:
-    """Returns (item_id, human_time, error). Stores human-readable time for now."""
     text = (raw or "").strip()
     if text.lower().startswith("запланировать "):
         text = text.split(" ", 1)[1].strip()
@@ -235,9 +316,9 @@ def _parse_queue_schedule_text(raw: str) -> tuple[int | None, str | None, str | 
     if len(parts) < 2 or not parts[0].isdigit():
         return None, None, "Отправь: ID и время. Пример: 1 завтра 18:00"
     item_id = int(parts[0])
-    when = parts[1].strip()
+    when = _normalize_schedule_time(parts[1].strip())
     if not when:
-        return None, None, "После ID укажи время. Пример: 1 завтра 18:00"
+        return None, None, "Не понял дату. Примеры: 1 завтра 18:00, 1 08.06.2026 18:00, 1 2026-06-08 18:00"
     return item_id, when, None
 
 
@@ -547,7 +628,7 @@ async def generate_rubric_day(message: Message, state: FSMContext):
             "expected_response": {"text": "Ready Telegram post for selected rubric"},
         }, timeout=120)
         if result.get("ok"):
-            content = _clean_visible_text(result.get("text") or result.get("raw") or "")
+            content = _finalize_rubric_content(rubric, result.get("text") or result.get("raw") or "")
         else:
             content = (
                 f"{rubric}\n\n"
@@ -1388,7 +1469,7 @@ async def rubric_schedule_apply(message: Message, state: FSMContext):
         for line in raw.splitlines():
             parts = line.strip().split(maxsplit=1)
             if len(parts) == 2 and parts[0].isdigit():
-                schedule_map[int(parts[0])] = parts[1].strip()
+                schedule_map[int(parts[0])] = _normalize_schedule_time(parts[1].strip()) or parts[1].strip()
     from services.content_queue import add_prime_content, STATUS_DRAFT, STATUS_SCHEDULED
     added = []
     for idx, post in enumerate(posts, start=1):
@@ -1826,6 +1907,44 @@ async def admin_broadcast_text_apply(message: Message, state: FSMContext):
     )
 
 
+async def _schedule_album_final_response(message: Message, state: FSMContext, item_id: int, media_group_id: str):
+    """Telegram sends albums as several updates. Send one final confirmation after the group settles."""
+    await state.update_data(active_album_group=media_group_id, active_album_item_id=item_id)
+    key = f"{message.from_user.id}:{media_group_id}"
+    old_task = _PENDING_ALBUM_TASKS.get(key)
+    if old_task and not old_task.done():
+        old_task.cancel()
+
+    async def _finalize():
+        try:
+            await asyncio.sleep(1.8)
+            from services.content_queue import get_prime_content
+            item = get_prime_content(item_id, user_id=message.from_user.id)
+            meta = item.get("meta") if item and isinstance(item.get("meta"), dict) else {}
+            count = meta.get("album_count") or (len(meta.get("album_items") or []) if isinstance(meta.get("album_items"), list) else 1)
+            await state.clear()
+            await message.answer(
+                f"✅ <b>Альбом добавлен в очередь</b>\n\n"
+                f"ID: <code>{item_id}</code>\n"
+                f"Фото: <b>{count}</b>\n"
+                f"Тип: <code>album</code>\n"
+                f"Статус: <code>ready</code>\n\n"
+                "Дальше можно:\n"
+                "• 📅 Изменить дату публикации;\n"
+                "• 📝 Редактировать подпись;\n"
+                "• 🗑 Удалить пост.\n\n"
+                f"Пример даты: <code>{item_id} завтра 18:00</code>",
+                reply_markup=prime_publish_hub_menu,
+                parse_mode="HTML",
+            )
+        except asyncio.CancelledError:
+            return
+        finally:
+            _PENDING_ALBUM_TASKS.pop(key, None)
+
+    _PENDING_ALBUM_TASKS[key] = asyncio.create_task(_finalize())
+
+
 @router.message(AdminPrimeN8NState.waiting_custom_queue_post)
 async def admin_custom_queue_post_apply(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -1858,6 +1977,14 @@ async def admin_custom_queue_post_apply(message: Message, state: FSMContext):
         media_type = "document"
         media_file_id = message.document.file_id
         file_unique_id = message.document.file_unique_id
+
+    data = await state.get_data()
+    if data.get("active_album_group") and not media_file_id:
+        await message.answer(
+            "⏳ Альбом ещё сохраняется. Я пришлю одно итоговое сообщение с ID. После этого можно менять дату публикации.",
+            reply_markup=prime_publish_hub_menu,
+        )
+        return
 
     if not text and not media_file_id:
         await message.answer(
@@ -2022,9 +2149,12 @@ async def admin_queue_text_commands(message: Message, state: FSMContext):
     if cmd.lower() == 'запланировать':
         if len(parts) < 2:
             await message.answer('📅 После ID укажи время. Пример: запланировать 1 завтра 18:00', reply_markup=prime_publish_hub_menu); return
+        item_id2, when, error = _parse_queue_schedule_text(f"{item_id} {parts[1]}")
+        if error:
+            await message.answer(error, reply_markup=prime_publish_hub_menu); return
         from services.content_queue import schedule_prime_content
-        item = schedule_prime_content(item_id, parts[1])
-        await message.answer((f'📅 Материал <code>{item_id}</code> запланирован на: <b>{parts[1]}</b>' if item else '⚠️ Материал с таким ID не найден.'), reply_markup=prime_publish_hub_menu, parse_mode='HTML')
+        item = schedule_prime_content(item_id2, when)
+        await message.answer((f'📅 Материал <code>{item_id2}</code> запланирован на: <b>{when}</b>' if item else '⚠️ Материал с таким ID не найден.'), reply_markup=prime_publish_hub_menu, parse_mode='HTML')
         return
 
 @router.message(AdminPrimeN8NState.waiting_delete_queue_id)
