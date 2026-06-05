@@ -124,8 +124,9 @@ def _rubric_prompt(rubric: str, topic: str) -> str:
     return (
         f"{instructions.get(rubric, 'Сделай экспертный Telegram-пост для рубрики.')}\n\n"
         f"Тема/ниша/контекст: {base}\n\n"
-        "Формат: заголовок, короткий сильный хук, основной текст по пунктам, вывод. "
-        "Не добавляй кнопки, ссылки и подпись PrimeOnix AI — кнопки бот добавит сам."
+        "Формат Telegram 10/10: короткий заголовок, сильный хук, блоки с эмодзи-маркерами, пустые строки между смысловыми частями, конкретный пример, спокойный вывод. "
+        "Не делай слитную простыню. Не добавляй кнопки, ссылки и подпись PrimeOnix AI — кнопки бот добавит сам. "
+        "Длина: 900–1400 символов, чтобы пост не обрывался и нормально читался в канале."
     )
 
 
@@ -157,6 +158,7 @@ class AdminPrimeN8NState(StatesGroup):
     waiting_edit_queue_item = State()
     waiting_mark_ready_queue_id = State()
     waiting_custom_queue_post = State()
+    waiting_carousel_count = State()
     waiting_rubric_topic = State()
     waiting_rubric_edit_choice = State()
     waiting_rubric_edit_text = State()
@@ -588,8 +590,8 @@ N8N_ADMIN_TASKS = {
 
 def _keyboard_by_key(key: str):
     return {
-        "telegram": prime_content_hub_menu,
-        "instagram": prime_content_hub_menu,
+        "telegram": prime_telegram_hub_menu,
+        "instagram": prime_instagram_hub_menu,
         "funnel": prime_funnel_hub_menu,
         "content": prime_content_hub_menu,
     }.get(key, prime_panel_menu)
@@ -788,10 +790,12 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
             await message.answer("👥 Пользователей пока нет в базе.", reply_markup=prime_users_menu)
             return
         lines = ["👥 <b>Последние пользователи</b>\n"]
+        from config import settings as _settings
         for uid, username, first_name, plan, pro_until, created_at in rows:
             name = (first_name or username or "без имени")
             uname = f"@{username}" if username else "—"
-            lines.append(f"• <code>{uid}</code> — {name} / {uname} / {plan or 'free'}")
+            display_plan = "admin/pro" if _settings.ADMIN_ID and int(uid) == int(_settings.ADMIN_ID) else (plan or "free")
+            lines.append(f"• <code>{uid}</code> — {name} / {uname} / {display_plan}")
         await message.answer("\n".join(lines), reply_markup=prime_users_menu, parse_mode="HTML")
         return
 
@@ -871,6 +875,17 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
     if message.text in N8N_ADMIN_TASKS:
         task = N8N_ADMIN_TASKS[message.text]
         await state.update_data(admin_n8n_task=task)
+        if task.get("content_type") == "carousel":
+            await state.set_state(AdminPrimeN8NState.waiting_carousel_count)
+            await message.answer(
+                "🎠 <b>Instagram карусель</b>\n\n"
+                "Сколько слайдов сделать?\n\n"
+                "Напиши число от 3 до 10. Например: <code>5</code>\n\n"
+                "После этого я попрошу тему и соберу карусель под выбранное количество слайдов.",
+                reply_markup=_keyboard_by_key(task.get('keyboard', '')),
+                parse_mode="HTML",
+            )
+            return
         await state.set_state(AdminPrimeN8NState.waiting_task_prompt)
         await message.answer(
             f"{task['title']}\n\n"
@@ -1002,6 +1017,36 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
     )
 
 
+@router.message(AdminPrimeN8NState.waiting_carousel_count)
+async def admin_prime_carousel_count(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        await state.clear()
+        return
+    text = (message.text or "").strip()
+    if text in HUBS:
+        await state.clear()
+        hub_text, hub_keyboard = HUBS[text]
+        await message.answer(hub_text, reply_markup=hub_keyboard, parse_mode="HTML")
+        return
+    if text in {"⬅️ Назад в Контент Центр"}:
+        await state.clear()
+        hub_text, hub_keyboard = HUBS["📣 Контент Центр"]
+        await message.answer(hub_text, reply_markup=hub_keyboard, parse_mode="HTML")
+        return
+    if not text.isdigit() or not (3 <= int(text) <= 10):
+        await message.answer("Отправь число слайдов от 3 до 10. Например: 5", reply_markup=prime_instagram_hub_menu)
+        return
+    count = int(text)
+    await state.update_data(carousel_slides_count=count)
+    await state.set_state(AdminPrimeN8NState.waiting_task_prompt)
+    await message.answer(
+        f"✅ Карусель будет на {count} слайдов.\n\n"
+        "Теперь напиши тему, нишу, продукт или задачу.\n"
+        "Я распределю смысл по всем слайдам: хук → проблема → решение → пример → вывод.",
+        reply_markup=prime_instagram_hub_menu,
+    )
+
+
 @router.message(AdminPrimeN8NState.waiting_task_prompt)
 async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -1015,6 +1060,10 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
     if text in N8N_ADMIN_TASKS:
         task = N8N_ADMIN_TASKS[text]
         await state.update_data(admin_n8n_task=task)
+        if task.get("content_type") == "carousel":
+            await state.set_state(AdminPrimeN8NState.waiting_carousel_count)
+            await message.answer("🎠 Сколько слайдов сделать? Напиши число от 3 до 10. Например: 5", reply_markup=_keyboard_by_key(task.get('keyboard', '')))
+            return
         await state.set_state(AdminPrimeN8NState.waiting_task_prompt)
         await message.answer(
             f"{task['title']}\n\n"
@@ -1064,6 +1113,7 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
         "topic": text,
         "prompt": text,
         "message": text,
+        "slides_count": (data.get("carousel_slides_count") or 8),
         "expected_response": {"text": "Human-readable generated package for Telegram"},
     }, timeout=120)
 
@@ -1097,6 +1147,7 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
             "media_url": image_url,
             "image_urls": image_urls,
             "slides": data_payload.get("slides") if isinstance(data_payload, dict) else None,
+            "slides_count": data.get("carousel_slides_count") or 8,
             "raw": data_payload,
         }
 
@@ -1118,7 +1169,7 @@ async def admin_prime_run_n8n_task(message: Message, state: FSMContext):
         if task.get("content_type") == "carousel" and image_urls:
             try:
                 media = []
-                for idx, url in enumerate(image_urls[:8]):
+                for idx, url in enumerate(image_urls[:int(data.get("carousel_slides_count") or 8)]):
                     if not url:
                         continue
                     caption = "🎠 Картинки к карусели" if idx == 0 else None
@@ -1169,8 +1220,10 @@ async def admin_find_user_apply(message: Message, state: FSMContext):
         await message.answer("🔎 Пользователь не найден.", reply_markup=prime_users_menu)
         return
     uid, username, first_name, plan, pro_until, created_at = row
+    from config import settings as _settings
+    display_plan = "admin/pro" if _settings.ADMIN_ID and int(uid) == int(_settings.ADMIN_ID) else (plan or "free")
     await message.answer(
-        f"🔎 <b>Пользователь найден</b>\n\nID: <code>{uid}</code>\nUsername: @{username or '—'}\nИмя: {first_name or '—'}\nТариф: {plan or 'free'}\nPRO до: {pro_until or '—'}\nСоздан: {created_at or '—'}",
+        f"🔎 <b>Пользователь найден</b>\n\nID: <code>{uid}</code>\nUsername: @{username or '—'}\nИмя: {first_name or '—'}\nТариф: {display_plan}\nPRO до: {pro_until or '—'}\nСоздан: {created_at or '—'}",
         reply_markup=prime_users_menu,
         parse_mode="HTML",
     )
@@ -1359,7 +1412,7 @@ async def rubric_schedule_apply(message: Message, state: FSMContext):
     await message.answer("\n".join(lines), reply_markup=prime_rubric_after_generation_menu)
 
 
-@router.message(F.text == "🧹 Сбросить очередь")
+@router.message(F.text.in_({"🧹 Сбросить очередь", "🧹 Сбросить пакет"}))
 async def reset_rubric_pack(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
@@ -1414,14 +1467,30 @@ async def publish_last_to_telegram_channel(message: Message, state: FSMContext):
 
     content = last.get("content") or ""
     image_url = last.get("image_url") or last.get("media_url")
+    image_urls = last.get("image_urls") or []
+    content_type = last.get("content_type") or last.get("action") or ""
     try:
-        if image_url:
+        # Важно: обычный «Telegram пост» публикуется ТОЛЬКО текстом, даже если n8n вернул технический image_url.
+        if content_type == "post_image" and image_url:
             await message.bot.send_photo(
                 chat_id=settings.CHANNEL_ID,
                 photo=_telegram_photo_input(image_url),
                 caption=_short_caption(content, 700),
                 reply_markup=post_action_buttons(),
             )
+        elif content_type == "carousel" and image_urls:
+            media = []
+            for idx, url in enumerate(image_urls[:10]):
+                if not url:
+                    continue
+                media.append(InputMediaPhoto(
+                    media=_telegram_photo_input(url),
+                    caption=_short_caption(content, 900) if idx == 0 else None,
+                ))
+            if media:
+                await message.bot.send_media_group(chat_id=settings.CHANNEL_ID, media=media)
+            else:
+                await message.bot.send_message(chat_id=settings.CHANNEL_ID, text=content, reply_markup=post_action_buttons())
         else:
             await message.bot.send_message(chat_id=settings.CHANNEL_ID, text=content, reply_markup=post_action_buttons())
         await message.answer("✅ Опубликовано в Telegram-канал.", reply_markup=prime_after_generation_menu)
