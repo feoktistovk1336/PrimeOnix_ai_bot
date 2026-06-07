@@ -1,6 +1,5 @@
 import json
 import os
-from datetime import datetime
 from typing import Any
 
 QUEUE_FILE = os.getenv("PRIME_CONTENT_QUEUE_FILE", "data/prime_content_queue.json")
@@ -17,7 +16,8 @@ STATUS_TG_SENT = "tg_sent"
 
 
 def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M")
+    from services.timezone_utils import now_text
+    return now_text()
 
 
 def _ensure_file():

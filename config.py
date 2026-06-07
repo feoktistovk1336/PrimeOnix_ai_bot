@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     BRAND_USERNAME: str | None = None
     TELEGRAM_LINK: str = "https://t.me/primeonix26"
+    APP_TIMEZONE: str = "Europe/Moscow"
 
     # n8n automation webhook. This is the main bridge:
     # Telegram bot -> n8n -> AI/Metricool/Instagram/Telegram workflows

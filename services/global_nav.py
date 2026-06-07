@@ -7,6 +7,7 @@ from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 
 from config import settings
+from services.timezone_utils import schedule_examples
 from keyboards import (
     main_menu,
     admin_main_menu,
@@ -242,7 +243,7 @@ class GlobalNavigationMiddleware(BaseMiddleware):
             if text == "🗑 Удалить из очереди":
                 await state.set_state(AdminPrimeN8NState.waiting_delete_queue_id); await message.answer("🗑 Отправь ID материала из очереди для удаления.", reply_markup=prime_publish_hub_menu); return True
             if text == "📅 Публикация позже":
-                await state.set_state(AdminPrimeN8NState.waiting_schedule_queue); await message.answer("📅 Отправь: ID и время.\n\nПример: 3 завтра 18:00", reply_markup=prime_publish_hub_menu); return True
+                await state.set_state(AdminPrimeN8NState.waiting_schedule_queue); await message.answer(f"📅 Отправь: ID и время.\n\nПримеры:\n{schedule_examples(3)}", reply_markup=prime_publish_hub_menu); return True
             if text == "✏️ Редактировать материал":
                 await state.set_state(AdminPrimeN8NState.waiting_edit_queue_item); await message.answer("✏️ Отправь ID материала и новый текст.\n\nПример: 3 Сделай текст короче и сильнее.", reply_markup=prime_publish_hub_menu); return True
             if text == "✅ Отметить готово":
