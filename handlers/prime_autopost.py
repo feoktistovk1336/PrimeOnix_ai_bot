@@ -8,6 +8,7 @@ from handlers.prime_viral import LAST_PRIME_RESULT
 from keyboards import prime_panel_menu, prime_autopost_menu, dm_funnel_topic_menu, publish_prepare_menu, prime_publish_hub_menu, prime_checks_menu
 from services.ai import ask_ai
 from services.sender import send_long
+from services.timezone_utils import now_local, today_dotted
 from services.content_queue import (
     add_prime_content,
     list_prime_content,
@@ -433,7 +434,7 @@ def _parse_schedule_time(raw: str):
     import re
 
     text = (raw or "").strip().lower().replace("  ", " ")
-    now = datetime.now()
+    now = now_local()
 
     m = re.search(r"(\d{1,2})[:.](\d{2})", text)
     hour = int(m.group(1)) if m else 10
@@ -535,13 +536,13 @@ async def schedule_queue_item_by_command(message: Message):
     import re
     m = re.match(r"^запланировать\s+(\d+)\s+(.+)$", (message.text or "").strip(), re.I)
     if not m:
-        await message.answer("Формат: запланировать 3 завтра 18:00", reply_markup=prime_autopost_menu)
+        await message.answer("Формат: запланировать 3 сегодня 18:00 или запланировать 3 завтра 18:00", reply_markup=prime_autopost_menu)
         return
 
     item_id = int(m.group(1))
     dt = _parse_schedule_time(m.group(2))
     if not dt:
-        await message.answer("Не понял дату/время. Пример: запланировать 3 завтра 18:00", reply_markup=prime_autopost_menu)
+        await message.answer("Не понял дату/время. Пример: запланировать 3 сегодня 18:00 или запланировать 3 завтра 18:00", reply_markup=prime_autopost_menu)
         return
 
     item = get_prime_content(item_id, message.from_user.id)

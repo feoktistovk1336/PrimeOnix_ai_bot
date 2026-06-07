@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
 from handlers.admin import is_admin
+from services.timezone_utils import now_local, schedule_examples, today_dotted
 from config import settings
 from keyboards import (
     admin_menu,
@@ -257,7 +258,7 @@ def _normalize_schedule_time(raw_when: str) -> str | None:
     """Normalize Russian date input to YYYY-MM-DD HH:MM for queue worker."""
     text = (raw_when or "").strip().lower()
     text = text.replace(",", " ").replace("  ", " ")
-    now = datetime.now()
+    now = now_local()
 
     # сегодня 18:00 / завтра 18:00
     parts = text.split()
@@ -314,11 +315,11 @@ def _parse_queue_schedule_text(raw: str) -> tuple[int | None, str | None, str | 
         text = text.split(" ", 1)[1].strip()
     parts = text.split(maxsplit=1)
     if len(parts) < 2 or not parts[0].isdigit():
-        return None, None, "Отправь: ID и время. Пример: 1 завтра 18:00"
+        return None, None, "Отправь: ID и время. Пример: 1 сегодня 18:00 или 1 завтра 18:00"
     item_id = int(parts[0])
     when = _normalize_schedule_time(parts[1].strip())
     if not when:
-        return None, None, "Не понял дату. Примеры: 1 завтра 18:00, 1 08.06.2026 18:00, 1 2026-06-08 18:00"
+        return None, None, f"Не понял дату. Примеры: 1 сегодня 18:00, 1 завтра 18:00, 1 {today_dotted()} 18:00"
     return item_id, when, None
 
 
@@ -718,6 +719,7 @@ ADMIN_ACTION_TEXTS = {
     "🎯 Рассылка по сегменту": "WF Broadcast: выбранный сегмент/воронка.",
     "👥 Список пользователей": "Админ: список пользователей. Подключим пагинацию.",
     "🔎 Найти пользователя": "Админ: поиск пользователя по ID/username.",
+    "📜 История пользователя": "Админ: история пользователя по ID/username.",
     "🚫 Забрать PRO": "Админ: забрать PRO у пользователя.",
     "➕ Выдать бонусы": "Админ: добавить бонусные генерации/дни.",
     "🔄 Сбросить лимиты": "Админ: сбросить лимиты пользователя.",
@@ -793,8 +795,7 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
             "— документ/файл с подписью.\n\n"
             "Я сохраню материал в очередь и дам ID. Если отправишь несколько фото одним альбомом — они сохранятся как один материал, а не как несколько постов. Потом через «📅 Изменить дату публикации» можно поставить дату и время выхода.\n\n"
             "Примеры даты:\n"
-            "<code>1 завтра 18:00</code>\n"
-            "<code>1 08.06.2026 18:00</code>",
+            f"{schedule_examples(1)}",
             reply_markup=prime_publish_hub_menu,
             parse_mode="HTML",
         )
@@ -807,7 +808,7 @@ async def admin_action_placeholder(message: Message, state: FSMContext):
 
     if message.text in {"📅 Публикация позже", "✏️ Редактировать очередь", "📅 Изменить дату публикации"}:
         await state.set_state(AdminPrimeN8NState.waiting_schedule_queue)
-        await message.answer("✏️ <b>Редактировать очередь</b>\n\nОтправь ID материала и новую дату/время выхода.\n\nПример:\n<code>3 завтра 18:00</code>\nили\n<code>3 08.06.2026 18:00</code>", reply_markup=prime_publish_hub_menu, parse_mode="HTML")
+        await message.answer(f"✏️ <b>Редактировать очередь</b>\n\nОтправь ID материала и новую дату/время выхода.\n\nПримеры:\n{schedule_examples(3)}", reply_markup=prime_publish_hub_menu, parse_mode="HTML")
         return
 
     if message.text == "📤 Подготовить к публикации":
@@ -1315,23 +1316,61 @@ async def admin_user_history_apply(message: Message, state: FSMContext):
         await state.clear(); return
     if await _maybe_switch_admin_section(message, state):
         return
-    q = (message.text or '').strip()
-    if not q.isdigit():
-        await message.answer("Отправь числовой user_id.", reply_markup=prime_users_menu)
-        return
-    uid = int(q)
+    q = (message.text or '').strip().lstrip('@')
     import aiosqlite
     from database.db import DB_PATH
     async with aiosqlite.connect(DB_PATH) as db:
+        if q.isdigit():
+            cur = await db.execute("SELECT user_id, username, first_name, plan, pro_until, created_at FROM users WHERE user_id=?", (int(q),))
+        else:
+            cur = await db.execute("SELECT user_id, username, first_name, plan, pro_until, created_at FROM users WHERE lower(username)=lower(?)", (q,))
+        user = await cur.fetchone()
+        if not user:
+            await state.clear()
+            await message.answer(
+                "⚠️ Пользователь не найден. Отправь числовой user_id или username без пробелов.",
+                reply_markup=prime_users_menu,
+            )
+            return
+        uid, username, first_name, plan, pro_until, created_at = user
         cur = await db.execute("SELECT feature, created_at FROM usage WHERE user_id=? ORDER BY created_at DESC LIMIT 20", (uid,))
-        rows = await cur.fetchall()
+        usage_rows = await cur.fetchall()
+        try:
+            cur = await db.execute("SELECT COUNT(*) FROM style_samples WHERE user_id=?", (uid,))
+            style_count = (await cur.fetchone())[0]
+        except Exception:
+            style_count = 0
     await state.clear()
-    if not rows:
-        await message.answer(f"📜 История пользователя <code>{uid}</code> пустая.", reply_markup=prime_users_menu, parse_mode="HTML")
-        return
-    lines = [f"📜 <b>История пользователя</b> <code>{uid}</code>\n"]
-    for feature, created_at in rows:
-        lines.append(f"• {created_at}: {feature}")
+    from services.content_queue import list_prime_content, queue_stats
+    qstats = queue_stats(user_id=int(uid))
+    recent_queue = list_prime_content(user_id=int(uid), limit=5)
+    display_plan = "admin/pro" if settings.ADMIN_ID and int(uid) == int(settings.ADMIN_ID) else (plan or "free")
+    lines = [
+        f"📜 <b>История пользователя</b> <code>{uid}</code>",
+        "",
+        f"Имя: {first_name or '—'}",
+        f"Username: @{username}" if username else "Username: —",
+        f"Тариф: <b>{display_plan}</b>",
+        f"PRO до: {pro_until or '—'}",
+        f"В базе с: {created_at or '—'}",
+        f"Обучение стилю: {style_count} материалов",
+        "",
+        "📦 <b>Очередь пользователя</b>",
+    ]
+    if qstats:
+        lines.append(", ".join([f"{k}: {v}" for k, v in qstats.items()]))
+    else:
+        lines.append("Материалов в очереди нет.")
+    if recent_queue:
+        lines.append("\nПоследние материалы:")
+        for it in recent_queue:
+            lines.append(f"• ID {it.get('id')} | {it.get('status')} | {it.get('content_type')} | {it.get('scheduled_at') or 'без даты'}")
+    lines.append("\n⚡ <b>Последние действия</b>")
+    if usage_rows:
+        for feature, created_at in usage_rows:
+            lines.append(f"• {created_at}: {feature}")
+    else:
+        lines.append("История действий пока пустая.")
     await message.answer("\n".join(lines), reply_markup=prime_users_menu, parse_mode="HTML")
 
 
@@ -1933,7 +1972,7 @@ async def _schedule_album_final_response(message: Message, state: FSMContext, it
                 "• 📅 Изменить дату публикации;\n"
                 "• 📝 Редактировать подпись;\n"
                 "• 🗑 Удалить пост.\n\n"
-                f"Пример даты: <code>{item_id} завтра 18:00</code>",
+                f"Пример даты:\n{schedule_examples(item_id)}",
                 reply_markup=prime_publish_hub_menu,
                 parse_mode="HTML",
             )
@@ -2010,17 +2049,9 @@ async def admin_custom_queue_post_apply(message: Message, state: FSMContext):
             "file_unique_id": file_unique_id,
         }
         if existing:
-            item = append_media_to_prime_content(existing.get("id"), media_payload, caption=text or None)
-            count = 0
-            meta = item.get("meta") if item and isinstance(item.get("meta"), dict) else {}
-            if isinstance(meta.get("album_items"), list):
-                count = len(meta.get("album_items"))
-            await message.answer(
-                f"✅ Фото добавлено в альбом очереди.\n\nID: <code>{existing.get('id')}</code>\nФото в альбоме: <b>{count}</b>\n\n"
-                "Это будет один пост-альбом, а не несколько отдельных постов.",
-                reply_markup=prime_publish_hub_menu,
-                parse_mode="HTML",
-            )
+            append_media_to_prime_content(existing.get("id"), media_payload, caption=text or None)
+            # One album = one final confirmation. Restart timer for every new album message.
+            await _schedule_album_final_response(message, state, int(existing.get("id")), media_group_id)
             return
 
         item = add_prime_content(
@@ -2043,15 +2074,8 @@ async def admin_custom_queue_post_apply(message: Message, state: FSMContext):
                 "album_count": 1,
             },
         )
-        await message.answer(
-            f"✅ <b>Альбом добавлен в очередь</b>\n\n"
-            f"ID: <code>{item.get('id')}</code>\n"
-            "Фото в альбоме: <b>1</b>\n\n"
-            "Если в этом же альбоме есть ещё фото, я добавлю их к этому же ID.\n"
-            f"Пример даты: <code>{item.get('id')} завтра 18:00</code>",
-            reply_markup=prime_publish_hub_menu,
-            parse_mode="HTML",
-        )
+        # One album = one final confirmation after all Telegram album updates arrive.
+        await _schedule_album_final_response(message, state, int(item.get("id")), media_group_id)
         return
 
     content_type = "custom_post" if media_type == "text" else f"custom_{media_type}"
@@ -2148,7 +2172,7 @@ async def admin_queue_text_commands(message: Message, state: FSMContext):
         return
     if cmd.lower() == 'запланировать':
         if len(parts) < 2:
-            await message.answer('📅 После ID укажи время. Пример: запланировать 1 завтра 18:00', reply_markup=prime_publish_hub_menu); return
+            await message.answer(f'📅 После ID укажи время. Пример: запланировать 1 сегодня 18:00 или 1 завтра 18:00', reply_markup=prime_publish_hub_menu); return
         item_id2, when, error = _parse_queue_schedule_text(f"{item_id} {parts[1]}")
         if error:
             await message.answer(error, reply_markup=prime_publish_hub_menu); return
